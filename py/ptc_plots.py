@@ -2,6 +2,7 @@ from __future__ import print_function
 from ptcfit import *
 from ptc_utils import *
 
+#import croaks
 
 def make_all_plots(tuple_name='v12/dc5-tuple.npy',maxmu = 1.4e5, maxmu_el = 1e5,r=8) :
     try : 
@@ -39,6 +40,7 @@ def make_all_plots_itl(tuple_name='dc1-tuple-corr.npy',maxmu = 1.4e5, maxmu_el =
     plot_a_b(fits,figname='a_and_b.png')
     ab_vs_dist(fits, brange=4, figname='a_b_dist.pdf')
     make_distant_cov_plot(fits, tuple_name=tuple_name)
+
 
 
 
@@ -263,7 +265,7 @@ def plot_a_sum(fits, figname=None) :
     indices = range(1,a.shape[0]+1)
     sums = [wa[0:n,0:n].sum() for n in indices]
     ax = pl.subplot(111)
-    ax.plot(indices,sums/sums[0],'.')
+    ax.plot(indices,sums/sums[0],'o',color='b')
     ax.set_yscale('log')
     ax.set_xlim(indices[0]-0.5, indices[-1]+0.5)
     ax.set_ylim(None, 1.2)
@@ -490,17 +492,21 @@ def ab_vs_dist(fits, brange=4, figname=None) :
     y = a.mean(axis = 0)
     sy = a.std(axis = 0)/np.sqrt(len(fits))
     i, j = np.indices(y.shape)
-    r = np.sqrt(i**2+j**2).flatten()
-    y = y.flatten()
-    sy = sy.flatten()
+    upper = (i>=j).ravel()
+    r = np.sqrt(i**2+j**2).ravel()
+    y = y.ravel()
+    sy = sy.ravel()
     fig = pl.figure(figsize=(6,9))
     ax = fig.add_subplot(211)
     ax.set_xlim([0.5, r.max()+1])
-    ax.errorbar(r, y, yerr=sy, marker='.', linestyle='none')
+    ax.errorbar(r[upper], y[upper], yerr=sy[upper], marker='o', linestyle='none', color='b', label='$i>=j$')
+    ax.errorbar(r[~upper], y[~upper], yerr=sy[~upper], marker='o', linestyle='none', color='r', label='$i<j$')
+    ax.legend(loc='upper center', fontsize = 'x-large')
     ax.set_xlabel('$\sqrt{i^2+j^2}$',fontsize='x-large')
     ax.set_ylabel('$a_{ij}$',fontsize='x-large')
     ax.set_yscale('log')
     ax.tick_params(axis='both', labelsize='x-large')
+
     #axb.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     #
     axb = fig.add_subplot(212)
@@ -508,14 +514,18 @@ def ab_vs_dist(fits, brange=4, figname=None) :
     yb = b.mean(axis = 0)
     syb = b.std(axis = 0)/np.sqrt(len(fits))
     ib, jb = np.indices(yb.shape)
-    rb = np.sqrt(i**2+j**2).flatten()
-    yb = yb.flatten()
-    syb = syb.flatten()
+    upper = (ib>jb).ravel()
+    rb = np.sqrt(i**2+j**2).ravel()
+    yb = yb.ravel()
+    syb = syb.ravel()
     xmin = -0.2
     xmax = brange
     axb.set_xlim([xmin, xmax+0.2])
-    cut = (r>xmin) & (r<xmax)
-    axb.errorbar(rb[cut], yb[cut], yerr=syb[cut], marker='.', linestyle='none')
+    cutu = (r>xmin) & (r<xmax) & (upper)
+    cutl = (r>xmin) & (r<xmax) & (~upper)
+    axb.errorbar(rb[cutu], yb[cutu], yerr=syb[cutu], marker='o', linestyle='none', color='b', label='$i>=j$')
+    axb.errorbar(rb[cutl], yb[cutl], yerr=syb[cutl], marker='o', linestyle='none', color='r', label='$i<j$')
+    pl.legend(loc='upper center', fontsize='x-large')
     axb.set_xlabel('$\sqrt{i^2+j^2}$',fontsize='x-large')
     axb.set_ylabel('$b_{ij}$',fontsize='x-large')
     axb.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
@@ -559,7 +569,6 @@ def load_fits(filename):
     fits_nb = pickle.load(file)
     file.close()
     return fits,fits_nb
-
 
 def eval_nonlin_draw(tuple, knots=20, verbose= False):
     res, ccd, clap = eval_nonlin(tuple, knots, verbose, fullOutput = True)
@@ -626,7 +635,7 @@ def make_distant_cov_plot(fits, tuple_name='v12/dc5-tuple.npy'):
 
 #from mpl_toolkits.axes_grid1 import AxesGrid
     
-def make_satur_plot(tuple_name='v12/dc4-tuple.npy', channel=0):
+def make_satur_plot(tuple_name='v12/dc4-tuple.npy', channel=0, figname=None):
     # need the fits to get the gains, and the tuple to get the distant
     # covariances
     ntuple = croaks.NTuple.fromfile(tuple_name)
@@ -643,7 +652,8 @@ def make_satur_plot(tuple_name='v12/dc4-tuple.npy', channel=0):
 
     #gs.update(hspace=0.05)
     axes =[]
-    # var vs mu
+    texts = ['Variance','Nearest parallel \nneighbor covariance','Nearest serial \nneighbor covariance']
+    # var vs mu, cov01 vs mu, cov10 vs mu
     for k, indices in enumerate([(0,0), (0,1), (1,0)]) :
         if k == 0:
             ax = pl.subplot(gs[k])
@@ -657,10 +667,12 @@ def make_satur_plot(tuple_name='v12/dc4-tuple.npy', channel=0):
         nt = nt0[(nt0['i'] == i) & (nt0['j'] == j)]
         mu = 0.5*(nt['mu1'] + nt['mu2'])
         cov = 0.5*nt['cov']
-        ax.plot(mu,cov,'.')
+        ax.plot(mu,cov,'.b')
         # vertical line
         ax.plot([mu_cut, mu_cut],ax.get_ylim(),'--')
         ax.set_ylabel(u'$C_{%d%d}$ (ADU$^2$)'%(i,j), fontsize='x-large')
+        ax.text(0.1, 0.7, texts[k], fontsize='x-large', transform=ax.transAxes)
+        
         if k != 2 :
             pl.setp(ax.get_xticklabels(), visible=False)
             ax.xaxis.offsetText.set_visible(False)
@@ -669,6 +681,7 @@ def make_satur_plot(tuple_name='v12/dc4-tuple.npy', channel=0):
             ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
 
     gs.tight_layout(fig)
+    if figname is not None : pl.savefig(figname)
     #avoid_overlapping_y_labels(fig)
 
     return ax
@@ -871,7 +884,6 @@ def plot_da_dm(fits, fitsnb, maxr=None, figname=None):
     #
     pl.tight_layout()
     if figname is not None: pl.savefig(figname)    
-
 
 # borrowed from Marc Betoule.
 def binplot(x, y, nbins=10, robust=False, data=True,
