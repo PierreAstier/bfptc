@@ -9,6 +9,9 @@ For the time beeing it uses as input a  numpy recarray which contains
 one row per covariance and per pair: see routine make_cov_array
 """
 
+from ptc_utils import mad as mad
+
+
 def compute_old_fashion_a(fit, mu_el) :
     """
     Compute the a coefficients the old way (slope of cov/var at a given flux mu-el)
@@ -106,8 +109,7 @@ def symmetrize(a):
     return asym
 
 
-from saunerie.fitparameters import FitParameters
-import saunerie.robuststat as rob
+from fitparameters import FitParameters
 import copy
 
 from scipy.optimize import leastsq

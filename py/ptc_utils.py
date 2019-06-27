@@ -132,13 +132,13 @@ def select_from_tuple(t, i, j, ext):
 def eval_nonlin(tuple, knots = 20, verbose = False, fullOutput=False):
     """
     it will be faster if the tuple only contains the variances
-    return value: a list of correction spline functions (one per amp)
+    return value: a dictionnary of correction spline functions (one per amp)
     """
     amps = np.unique(tuple['ext'].astype(int))
-    res=[None]*int(amps.max()+1)
+    res={}
     if fullOutput:
-        x = [None]*int(amps.max()+1)
-        y = [None]*int(amps.max()+1)
+        x = {}
+        y = {}
     for i in amps :
         t = tuple[tuple['ext'] == i]
         clap = t['c1']
@@ -202,7 +202,7 @@ def fit_nonlin_corr(xin, yclapin, knots = 20, loop = 20, verbose = False, fullOu
         s = interp.splrep(xx, yyclap, task=-1, t=t[1:-1])
         model = interp.splev(xx, s)     # model values
         res = model - yyclap
-        sig = rob.mad(res)
+        sig = mad(res)
         res = np.abs(res)
         if (res> (5 * sig)).sum()>0 : # remove one at a time
             chi2_mask = np.ones(len(xx)).astype(bool)
