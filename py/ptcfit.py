@@ -1,22 +1,25 @@
 from __future__ import print_function
 import numpy as np
 import bfstuff.pol2d as pol2d
+from fitparameters import FitParameters
+import copy
+from scipy.optimize import leastsq
+from ptc_utils import mad as mad
+import scipy.optimize as opt
+
 
 """
 This code implements the model (and the fit thereof) described in
 https://arxiv.org/pdf/1905.08677.pdf
-For the time beeing it uses as input a  numpy recarray which contains
+For the time being it uses as input a numpy recarray which contains
 one row per covariance and per pair: see routine make_cov_array
 """
 
-from ptc_utils import mad as mad
-
-
 def compute_old_fashion_a(fit, mu_el) :
     """
-    Compute the a coefficients the old way (slope of cov/var at a given flux mu-el)
+    Compute the "a" coefficients the old way (slope of cov/var at a given flux mu-el)
 
-    Returns the a array, computed this way, to be compare to the actual a_array from the model (fit.get_a())
+    Returns the "a" array, computed this way, to be compare to the actual a_array from the model (fit.get_a())
     """
     gain = fit.get_gain()
     mu_adu = np.array([mu_el/gain])
@@ -25,23 +28,19 @@ def compute_old_fashion_a(fit, mu_el) :
     # model is in ADU**2, so is var, mu is in adu.
     # So for a result in electrons^-1, we have to convert mu to electrons
     return model[0,:,:]/(var*mu_el)
-    
-        
-        
 
 from scipy.signal import fftconvolve
-
 
 def make_cov_array(nt, r=8) :
     """from a tuple that contains rows with (at least):
     mu1, mu2, cov ,var, i, j, npix
-    
-    With one entry per lag, and image pair. 
+
+    With one entry per lag, and image pair.
     Different lags (i.e. different i and j) from the same
     image pair have the same values of mu1 and mu2. When i==j==0, cov
     = var.
 
-    r is the maximum range to select from tuple. 
+    r is the maximum range to select from tuple.
 
      If the input tuple contains several video channels, one should
      select the data of a given channel *before* entering this
@@ -50,29 +49,32 @@ def make_cov_array(nt, r=8) :
     returns cov[k_mu, j, i] , vcov[(same indices)], and mu[k]
     where the first index of cov matches the one in mu.
 
-    Notes: this routine implements the loss of variance due to 
+    Notes: this routine implements the loss of variance due to
     clipping cuts when measuring variances and covariance. This is the
-    *wrong* place to doit: it should happen inside the measurement code, 
+    *wrong* place to doit: it should happen inside the measurement code,
     where the cuts are readily available.
 
     """
-    if r is not None :
+    if r is not None:
         cut = (nt['i']<r) & (nt['j'] < r)
         ntc = nt[cut]
-    else : ntc = nt
-    # increasing mu order, so that we can group measurements with the same mu 
+    else:
+        ntc = nt
+    # increasing mu order, so that we can group measurements with the same mu
     mu_tmp = (ntc['mu1'] + ntc['mu2'])*0.5
     ind = np.argsort(mu_tmp)
     ntc = ntc[ind]
     # should group measurements on the same image pairs(same average)
     mu = 0.5*(ntc['mu1']+ntc['mu2'])
-    xx = np.hstack(([mu[0]], mu))
-    delta = xx[1:] - xx[:-1]
+    xx = np.hstack(([mu[0]], mu))    # ? AP
+    delta = xx[1:] - xx[:-1]         # ? AP
     steps, = np.where(delta>0)
     ind = np.zeros_like(mu, dtype = int)
     ind[steps] = 1
-    ind = np.cumsum(ind) # this acts as an image pair index.
+    ind = np.cumsum(ind)  # this acts as an image pair index.
     # now fill the 3-d cov array (and variance)
+
+    # Can you explain the following line a little bit more? (what exactly do you have to convert?) AP
     mu_val = np.array(np.unique(mu)) # have to convert because type is 'NTuple'
     i = ntc['i'].astype(int)
     j = ntc['j'].astype(int)
@@ -84,7 +86,7 @@ def make_cov_array(nt, r=8) :
     vcov = np.zeros_like(cov)
     cov[ind, i, j] = c
     vcov[ind, i, j] = v**2/n
-    vcov[:, 0,0] *= 2 # var(v) = 2*v**2/N
+    vcov[:, 0,0] *= 2 # var(v) = 2*v**2/N   # ? AP
     # compensate for loss of variance and covariance due to outlier elimination
     # when computing variances (cut to 4 sigma): 1 per mill for variances and twice as
     # much for covariances:
@@ -96,7 +98,7 @@ def make_cov_array(nt, r=8) :
 
 
 def symmetrize(a):
-    # copy over 4 quadrants prior to convolution.
+    # copy over 4 quadrants prior to convolution.  # ? AP
     target_shape = list(a.shape)
     r1,r2 = a.shape[-1],a.shape[-2]
     target_shape[-1] = 2*r1-1
@@ -109,18 +111,11 @@ def symmetrize(a):
     return asym
 
 
-from fitparameters import FitParameters
-import copy
-
-from scipy.optimize import leastsq
-
-
 class cov_fit :
     def __init__(self, nt, r=8) :
         self.cov, self.vcov, self.mu = make_cov_array(nt, r)
         self.sqrt_w  = 1./np.sqrt(self.vcov)
         self.r = self.cov.shape[1]
-        
 
     def subtract_distant_offset(self,r=8, start=15, degree=1) :
         assert(start < self.r)
@@ -138,7 +133,7 @@ class cov_fit :
         self.cov = self.cov[:,:r,:r]
         self.vcov = self.vcov[:,:r,:r]
         self.sqrt_w = self.sqrt_w[:,:r,:r]
-        
+
     def set_maxmu(self, maxmu) :
         # mus are sorted at construction
         index = self.mu<maxmu
@@ -152,24 +147,24 @@ class cov_fit :
         g = self.get_gain()
         kill = (self.mu*g > maxmu_el)
         self.sqrt_w[kill,:,:] = 0
-                        
 
-        
+
+
     def copy(self) :
         cop = copy.deepcopy(self)
         # deepcopy does not work for FitParameters, for now(06/18).
         if hasattr(self, 'params'):
             cop.params = self.params.copy()
         return cop
-        
+
     def init_fit(self) :
         """
-        performs a crude parabolic fit of the data in order to start 
+        performs a crude parabolic fit of the data in order to start
         the full fit close to the solution
         """
         # number of parameters for 'a'
         len_a = self.r*self.r
-        # define parameters : c corresponds to a*b in the paper. 
+        # define parameters : c corresponds to a*b in the paper.
         self.params=FitParameters([('a', len_a), ('c', len_a), ('noise', len_a), ('gain', 1)])
         self.params['gain'] = 1.
         # obvious : c=0 in a first go.
@@ -198,7 +193,7 @@ class cov_fit :
                     if (i+j==0) : print(p, gain, a[0,0])
             print('iter,chi2 a00 gain = ', iter, self.chi2(), a[0,0], gain)
 
-                
+
     def get_param_values(self):
         """
         return an array of free parameter values (it is a copy)
@@ -209,23 +204,25 @@ class cov_fit :
         self.params.free = p
 
     def eval_cov_model(self, mu=None) :
-        """ 
+        """
         by default, computes the cov_model for the mus stored (self.mu)
         returns cov[Nmu, self.r, self.r]. The PTC is cov[:, 0, 0].
         mu and cov are in ADUs and ADUs squared. to use electrons for both,
         the gain should be set to 1.
         This routine implments the model in 1905.08677
         """
+        #  Why the gain should be set to 1 e/ADU to use electrons? SHouldn't it be ADU*gain? (to get electrons) AP
+
         sa = (self.r, self.r)
         a = self.params['a'].full.reshape(sa)
         c = self.params['c'].full.reshape(sa)
         gain = self.params['gain'].full[0]
         noise = self.params['noise'].full.reshape(sa)
-        # pad a with zeros and symmetrize
+        # pad a with zeros and symmetrize    ? AP
         a_enlarged = np.zeros((int(sa[0]*1.5)+1, int(sa[1]*1.5)+1))
         a_enlarged[0:sa[0], 0:sa[1]] = a
         asym = symmetrize(a_enlarged)
-        # pad c with zeros and symmetrize
+        # pad c with zeros and symmetrize    ? AP
         c_enlarged = np.zeros((int(sa[0]*1.5)+1, int(sa[1]*1.5)+1))
         c_enlarged[0:sa[0], 0:sa[1]] = c
         csym = symmetrize(c_enlarged)
@@ -244,8 +241,8 @@ class cov_fit :
         bigmu = mu[:, np.newaxis, np.newaxis]*gain
         # c (=a*b in the paper) also has a contribution to the last term, that is absent for now.
         model = bigmu/(gain*gain)*(a1*bigmu+2./3.*(bigmu*bigmu)*(a2+c1)+(1./3.*a3+5./6.*ac)*(bigmu*bigmu*bigmu)) + noise[np.newaxis,:,:]/gain**2
-        # add the Poisson term, and the read out noise (variance, obviously) 
-        model[:,0,0] += mu/gain 
+        # add the Poisson term, and the read out noise (variance, obviously)
+        model[:,0,0] += mu/gain
         return model
 
     def get_a(self) :
@@ -256,7 +253,7 @@ class cov_fit :
 
     def get_c(self) :
         return self.params['c'].full.reshape(self.r, self.r)
-    
+
     def _get_cov_params(self,what):
         indices = self.params[what].indexof()
         #indicesp = [i for i in range(len(indices)) if indices[i]>=0 ]
@@ -293,11 +290,11 @@ class cov_fit :
 
     def get_noise(self) :
         return self.params['noise'].full.reshape(self.r, self.r)
-    
+
     def set_a_b(self, a,b) :
         self.params['a'].full = a.flatten()
         self.params['c'].full = a.flatten()*b.flatten()
-    
+
     def chi2(self) :
         return (self.weighted_res()**2).sum()
 
@@ -306,7 +303,7 @@ class cov_fit :
             self.set_param_values(params)
         model = self.eval_cov_model()
         return ((model-self.cov)*self.sqrt_w)
-    
+
     def weighted_res(self, params = None):
         """
         to be used via:
@@ -316,17 +313,17 @@ class cov_fit :
         works nicely indeed.
         """
         return self.wres(params).flatten()
-    
+
 
     def fit(self, p0 = None, nsig = 5) :
         if p0 is None:
             p0 = self.get_param_values()
         n_outliers = 1
-        while (n_outliers != 0) : 
+        while (n_outliers != 0) :
             coeffs, cov_params, _, mesg, ierr = leastsq(self.weighted_res, p0, full_output=True)
             wres = self.weighted_res(coeffs)
-            # do not count the outliers as significant : 
-            sig = rob.mad(wres[wres != 0]) 
+            # do not count the outliers as significant :
+            sig = rob.mad(wres[wres != 0])
             mask = (np.abs(wres)>(nsig*sig))
             self.sqrt_w.flat[mask] = 0 #flatten makes a copy
             n_outliers = mask.sum()
@@ -337,14 +334,14 @@ class cov_fit :
             raise RuntimeError(mesg)
         self.cov_params = cov_params
         return coeffs
-    
+
     def ndof(self):
         mask = self.sqrt_w != 0
         return mask.sum() - len(self.params.free)
-            
+
     def get_normalized_fit_data(self, i, j, divide_by_mu=True) :
         """
-        from a cov_fit, selects from (i,j) and 
+        from a cov_fit, selects from (i,j) and
         returns mu*gain, cov[i,j]*gain**2 model*gain**2 and sqrt_w/gain**2
         """
         gain = self.get_gain()
@@ -363,9 +360,7 @@ class cov_fit :
             model /= x
             w *= x
         return x,y,model,w
-    
 
-    
 
     def __call__(self, params) :
         self.set_param_values(params)
@@ -373,8 +368,6 @@ class cov_fit :
         print('chi2 = ',chi2)
         return chi2
 
-
-import scipy.optimize as opt
 
 
 def fft_cov_fun(x, a) :
@@ -407,7 +400,7 @@ class cov_fit_fft :
         param = np.polyfit(self.mu, self.cov[:,0,0], 3, w = 1/np.sqrt(self.vcov[:, 0, 0]))
         self.g = 1/param[-2]
         print('found a gain = ', self.g)
-        
+
 
     def fit(self) :
         cs = self.p_sym.shape
@@ -419,7 +412,7 @@ class cov_fit_fft :
                 x = self.g**2*self.mu
                 # guess some initial value
                 p_poly = np.polyfit(x, y, 2, w = wy)
-                p0 = np.ndarray((1))                
+                p0 = np.ndarray((1))
                 p0[0] = p_poly[0]
                 coeffs, cov, _, mesg, ierr = leastsq(WeightedRes(fft_cov_fun ,x,y, sigma = 1/wy), p0, full_output=True)
                 if ierr not in [1,2,3,4] : raise RuntimeError(mesg)
@@ -428,8 +421,8 @@ class cov_fit_fft :
         self.a_ = np.fft.fftshift(np.fft.ifft2(tmp))
         #it turns out that a_ is real up to rounding errors
         self.a = self.a_.real
-        
-        
+
+
 class WeightedRes:
     def __init__(self, model, x, y, sigma=None):
         self.x = x
@@ -441,6 +434,6 @@ class WeightedRes:
     def __call__(self, params) :
         if self.sigma is None:
             res = self.y-self.model(self.x,*params)
-        else : 
+        else :
             res = (self.y-self.model(self.x,*params))/self.sigma
         return res
