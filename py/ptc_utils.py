@@ -198,8 +198,9 @@ def fit_nonlin_corr(xin, yclapin, knots = 20, loop = 20, verbose = False, fullOu
         xx = xx[chi2_mask]
         # first fit the scaled difference between the two channels we are comparing
         yyclap = yyclap[chi2_mask]
-        t = np.linspace(xx[0], xx[-1], knots)
-        s = interp.splrep(xx, yyclap, task=-1, t=t[1:-1])
+        length = xx[-1]-xx[0]
+        t = np.linspace(xx[0]+1e-5*length, xx[-1]-1e-5*length, knots)
+        s = interp.splrep(xx, yyclap, task=-1, t=t)        
         model = interp.splev(xx, s)     # model values
         res = model - yyclap
         sig = mad(res)
@@ -275,3 +276,12 @@ def apply_quality_cuts(nt0, satu_adu=1.35e5, sig_ped=3):
     cut = (nt0['sp1']<sig_ped)  & (nt0['sp2']<sig_ped) & (nt0['mu1']<satu_adu)
     return nt0[cut]
 
+
+import astropy.io.fits as pf
+
+def dump_a_fits(fits) :
+    a = np.array([f.get_a() for f in fits.values()]).mean(axis=0)
+    siga = np.array([f.get_a_sig() for f in fits.values()]).mean(axis=0)
+    pf.writeto('a.fits', a, overwrite=True)
+    pf.writeto('siga.fits', siga, overwrite=True)
+    
