@@ -1,3 +1,4 @@
+
 import numpy as np
 from scipy.optimize import curve_fit
 from scipy.stats import sigmaclip
@@ -65,8 +66,8 @@ def analyze_clap(data, debug=False):
     l_before = clipped_average(data[w_before])
     l_after = clipped_average(data[w_after])
     if (debug) : 
-        print "transitions indices (start stop)", start,stop
-        print "levels before, during, after : ", l_before,l_on,l_after
+        print ("transitions indices (start stop) %d %d"%(start,stop))
+        print ("levels before, during, after : %d %d %d"%( l_before,l_on,l_after))
     #
     # now locate precisely the transitions
     # first transition
@@ -75,21 +76,21 @@ def analyze_clap(data, debug=False):
     # see the function "sigmoid" for what parameters mean
     pars = [start,0.1,l_before, l_on]
     popt, pcov = curve_fit(sigmoid, 
-                           range(fit_win_on.start, fit_win_on.stop,fit_win_on.step),
+                           list(range(fit_win_on.start, fit_win_on.stop,fit_win_on.step)),
                            data[fit_win_on], 
                            p0= pars)
     t_on = popt[0]
-    if debug : print "transition pars1 ", popt
+    if debug : print ("transition pars1 ", popt)
     # second transition 
     fit_win_off = slice(stop-margin,stop+margin,1)
     pars = [stop,0.1,l_on, l_after]
     popt, pcov = curve_fit(sigmoid, 
-                           range(fit_win_off.start, fit_win_off.stop,
-                                 fit_win_off.step),
+                           list(range(fit_win_off.start, fit_win_off.stop,
+                                 fit_win_off.step)),
                            data[fit_win_off], 
                            p0= pars)
     t_off = popt[0]
-    if debug : print "transition pars2 ", popt
+    if debug : print ("transition pars2 ", popt)
     
     # cannot use the found times to estimate the charge because the sigmoid
     # does not describe exactly the transitions.

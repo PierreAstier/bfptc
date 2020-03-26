@@ -1,6 +1,6 @@
-from __future__ import print_function
-from ptcfit import *
-from ptc_utils import *
+
+from .ptcfit import *
+from .ptc_utils import *
 
 #import croaks
 
@@ -47,7 +47,7 @@ def make_all_plots_itl(tuple_name='dc1-tuple-corr.npy',maxmu = 1.4e5, maxmu_el =
 
 
 
-import group
+from . import group
 def CHI2(res,wy):
     wres = res*wy
     return (wres*wres).sum()
@@ -65,7 +65,7 @@ def plot_cov(fits, i, j, offset=0.004):
     ax0=pl.subplot(gs[0])
     pl.setp(ax0.get_xticklabels(), visible=False)
     mue, rese, wce = [], [], []
-    for amp,fit in fits.iteritems() :
+    for amp,fit in fits.items() :
         mu,c, model, wc = fit.get_normalized_fit_data(i, j, divide_by_mu = True)
         chi2 = CHI2(c-model,wc)/(len(mu)-3)
         chi2bin= 0
@@ -143,7 +143,7 @@ def plot_cov_2(fits, fits_nb, i, j, offset=0.004, figname=None, plot_data = True
     ax0.tick_params(axis='both', labelsize='x-large')
     mue, rese, wce = [], [], []
     mue_nb, rese_nb, wce_nb = [], [], []
-    for amp,fit in fits.iteritems() :
+    for amp,fit in fits.items() :
         mu,c, model, wc = fit.get_normalized_fit_data(i, j, divide_by_mu = True)
         chi2 = CHI2(c-model,wc)/(len(mu)-3)
         chi2bin= 0
@@ -227,7 +227,7 @@ def plot_cov_2(fits, fits_nb, i, j, offset=0.004, figname=None, plot_data = True
     # overlapping y labels:
     fig.canvas.draw()
     labels0 = [item.get_text() for item in ax0.get_yticklabels()]
-    labels0[0] = u''
+    labels0[0] = ''
     ax0.set_yticklabels(labels0)
     #
     if figname is not None:
@@ -235,7 +235,7 @@ def plot_cov_2(fits, fits_nb, i, j, offset=0.004, figname=None, plot_data = True
 
 def plot_chi2_diff(fits, fits_nob) :
     chi2_diff = []
-    for amp in fits.keys() :
+    for amp in list(fits.keys()) :
         dchi2 =  ((fits_nob[amp].wres())**2).sum(axis=0)-((fits[amp].wres())**2).sum(axis=0)
         print(dchi2.sum())
         chi2_diff.append(dchi2)
@@ -251,7 +251,7 @@ from matplotlib.ticker import MaxNLocator
 
 def plot_a_sum(fits, figname=None) :
     a, b = [],[]
-    for amp,fit in fits.iteritems() :
+    for amp,fit in fits.items() :
         a.append(fit.get_a())
         b.append(fit.get_b())
     a = np.array(a).mean(axis=0)
@@ -262,7 +262,7 @@ def plot_a_sum(fits, figname=None) :
     w[1:,0] = 2
     w[0,0] = 1
     wa = w*a
-    indices = range(1,a.shape[0]+1)
+    indices = list(range(1,a.shape[0]+1))
     sums = [wa[0:n,0:n].sum() for n in indices]
     ax = pl.subplot(111)
     ax.plot(indices,sums/sums[0],'o',color='b')
@@ -279,7 +279,7 @@ def plot_a_sum(fits, figname=None) :
 
 def plot_a_b(fits, brange=3, figname=None) :
     a, b = [],[]
-    for amp,fit in fits.iteritems() :
+    for amp,fit in fits.items() :
         a.append(fit.get_a())
         b.append(fit.get_b())
     a = np.array(a).mean(axis=0)
@@ -314,7 +314,7 @@ import copy
 
 
 def ptc_table(fits, fits_nb, i=0, j=0):
-    amps = fits.keys()
+    amps = list(fits.keys())
     # collect arrays of everything, for stats 
     chi2_tot = np.array([fits[amp].chi2()/fits[amp].ndof() for amp in amps])
     a_00 = np.array([fits[amp].get_a()[i,j] for amp in amps])
@@ -488,7 +488,7 @@ def plot_ptc(fit) :
     
 
 def ab_vs_dist(fits, brange=4, figname=None) :
-    a = np.array([f.get_a() for f in fits.values()])
+    a = np.array([f.get_a() for f in list(fits.values())])
     y = a.mean(axis = 0)
     sy = a.std(axis = 0)/np.sqrt(len(fits))
     i, j = np.indices(y.shape)
@@ -510,7 +510,7 @@ def ab_vs_dist(fits, brange=4, figname=None) :
     #axb.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     #
     axb = fig.add_subplot(212)
-    b = np.array([f.get_b() for f in fits.values()])
+    b = np.array([f.get_b() for f in list(fits.values())])
     yb = b.mean(axis = 0)
     syb = b.std(axis = 0)/np.sqrt(len(fits))
     ib, jb = np.indices(yb.shape)
@@ -544,7 +544,7 @@ def make_noise_plot(fits) :
     ax = fig.add_subplot(111, projection='3d')
     #ax.view_init(elev=20, azim=45)
 
-    x,y = np.meshgrid(range(size),range(size))
+    x,y = np.meshgrid(list(range(size)),list(range(size)))
     x = x.flatten()
     y = y.flatten()
     n = n.flatten()
@@ -670,7 +670,7 @@ def make_satur_plot(tuple_name='v12/dc4-tuple.npy', channel=0, figname=None):
         ax.plot(mu,cov,'.b')
         # vertical line
         ax.plot([mu_cut, mu_cut],ax.get_ylim(),'--')
-        ax.set_ylabel(u'$C_{%d%d}$ (ADU$^2$)'%(i,j), fontsize='x-large')
+        ax.set_ylabel('$C_{%d%d}$ (ADU$^2$)'%(i,j), fontsize='x-large')
         ax.text(0.1, 0.7, texts[k], fontsize='x-large', transform=ax.transAxes)
         
         if k != 2 :
@@ -968,7 +968,6 @@ def binplot(x, y, nbins=10, robust=False, data=True,
             yerr = np.array([np.sqrt(1 / sum(w))
                              for e, w, a in zip(ybinned, wbinned, yplot)])
         scale = False
-        print yplot
     else:
         yplot = [np.mean(e) for e in ybinned]
         yerr = np.array([np.std(e) for e in ybinned])

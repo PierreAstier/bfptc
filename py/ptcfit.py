@@ -1,6 +1,6 @@
 from __future__ import print_function
 import numpy as np
-import bfstuff.pol2d as pol2d
+from . import pol2d as pol2d
 
 """
 This code implements the model (and the fit thereof) described in
@@ -179,6 +179,7 @@ class cov_fit :
         a = self.params['a'].full.reshape(self.r, self.r)
         noise = self.params['noise'].full.reshape(self.r,self.r)
         gain = self.params['gain'].full[0]
+        old_chi2 = 1e30
         for iter in range(5):   # iterate the fit to account for higher orders
             # the chi2 does not ncessarily go down, so one could
             # stop when it increases
@@ -195,8 +196,11 @@ class cov_fit :
                     if (i+j==0) :
                         gain  = 1./(1/gain+p[1])
                         self.params['gain'].full[0] = gain
-                    if (i+j==0) : print(p, gain, a[0,0])
-            print('iter,chi2 a00 gain = ', iter, self.chi2(), a[0,0], gain)
+                    #if (i+j==0) : print(p, gain, a[0,0])
+            chi2 = self.chi2()
+            print('iter,chi2 a00 gain = ', iter, chi2, a[0,0], gain)
+            if chi2 > old_chi2 : break
+            old_chi2 = chi2
 
                 
     def get_param_values(self):
@@ -323,10 +327,10 @@ class cov_fit :
             p0 = self.get_param_values()
         n_outliers = 1
         while (n_outliers != 0) : 
-            coeffs, cov_params, _, mesg, ierr = leastsq(self.weighted_res, p0, full_output=True)
+            coeffs, cov_params, _, mesg, ierr = leastsq(self.weighted_res, p0, full_output=True, maxfev=40000)
             wres = self.weighted_res(coeffs)
             # do not count the outliers as significant : 
-            sig = rob.mad(wres[wres != 0]) 
+            sig = mad(wres[wres != 0]) 
             mask = (np.abs(wres)>(nsig*sig))
             self.sqrt_w.flat[mask] = 0 #flatten makes a copy
             n_outliers = mask.sum()

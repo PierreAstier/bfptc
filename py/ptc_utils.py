@@ -6,6 +6,30 @@ import math
 import scipy.interpolate as interp
 
 
+# I don't know who wrote it...
+def mad(data, axis=0, scale=1.4826):
+    """
+    Median of absolute deviation along a given axis.  
+
+    Normalized to match the definition of the sigma for a gaussian
+    distribution.
+    """
+    if data.ndim == 1:
+        med = np.ma.median(data)
+        ret = np.ma.median(np.abs(data-med))
+    else:
+        med = np.ma.median(data, axis=axis)
+        if axis>0:
+            sw = np.ma.swapaxes(data, 0, axis)
+        else:
+            sw = data
+        ret = np.ma.median(np.abs(sw-med), axis=0)
+    return scale * ret
+
+
+
+
+
 import ptcfit
 
 class load_params :
@@ -129,7 +153,7 @@ def select_from_tuple(t, i, j, ext):
     return t[cut]
 
 
-def eval_nonlin(tuple, knots = 20, verbose = False, fullOutput=False):
+def eval_nonlin(tuple, knots = 20, verbose = False, fullOutput=False, ref_name='c'):
     """
     it will be faster if the tuple only contains the variances
     return value: a dictionnary of correction spline functions (one per amp)
@@ -139,10 +163,11 @@ def eval_nonlin(tuple, knots = 20, verbose = False, fullOutput=False):
     if fullOutput:
         x = {}
         y = {}
+    rname = ref_name+'1'
     for i in amps :
         t = tuple[tuple['ext'] == i]
-        clap = t['c1']
-        mu = t['mu1']
+        clap = np.hstack((t[ref_name+'1'],t[ref_name+'2']))
+        mu = np.hstack((t['mu1'],t['mu2']))
         if fullOutput :
             res[i], x[i], y[i] = fit_nonlin_corr(mu,clap, knots=knots, verbose=verbose, fullOutput=fullOutput)
         else :
@@ -153,27 +178,6 @@ def eval_nonlin(tuple, knots = 20, verbose = False, fullOutput=False):
         return res
 
     
-# I don't know who wrote it...
-def mad(data, axis=0, scale=1.4826):
-    """
-    Median of absolute deviation along a given axis.  
-
-    Normalized to match the definition of the sigma for a gaussian
-    distribution.
-    """
-    if data.ndim == 1:
-        med = np.ma.median(data)
-        ret = np.ma.median(np.abs(data-med))
-    else:
-        med = np.ma.median(data, axis=axis)
-        if axis>0:
-            sw = np.ma.swapaxes(data, 0, axis)
-        else:
-            sw = data
-        ret = np.ma.median(np.abs(sw-med), axis=0)
-    return scale * ret
-
-
 
 #    mcc = interp.splev(x, s) # model values
 #    dd = interp.splder(s)  # model derivative
@@ -188,7 +192,7 @@ def fit_nonlin_corr(xin, yclapin, knots = 20, loop = 20, verbose = False, fullOu
     """
     # do we need outlier rejection ?
     # the xin has to be sorted, although the doc does not say it....
-    index = xin.argsort()
+    index = xin. argsort()
     x = xin[index]
     yclap = yclapin[index]
     chi2_mask = np.isfinite(yclap) # yclap = nan kills the whole thing
@@ -210,12 +214,35 @@ def fit_nonlin_corr(xin, yclapin, knots = 20, loop = 20, verbose = False, fullOu
             chi2_mask[np.argmax(res)] = False
             continue
         else : break
-    # normalize so that the gain does not change too much
-    yyclap_norm = yyclap * xx.mean()/yyclap.mean()
-    s = interp.splrep(xx, yyclap_norm, task=-1, t=t[1:-2])
-    model = interp.splev(xx, s)     # model values
+    # enforce the fit to got through (0,0) and make sure that 0 is inside
+    # the definition domain of the spline.
+    # print('means yy ',yyclap.mean(),' xx ', xx.mean())
+    # print ('ymod[0]/xmod[0] ', interp.splev(xx[0],s)/xx[0],xx[0])
+    old_der = yyclap.mean()/xx.mean()
+    nx = len(xx)
+    fact = 1
+    nadd = nx/2
+    fit_val = interp.splev(xx[0],s)
+    fake_x = np.linspace(-xx[0]*fact, xx[0]*fact, nadd)
+    fake_y = np.linspace(-fit_val*fact, fit_val*fact, nadd)
+    xx = np.hstack((fake_x , xx))
+    yyclap = np.hstack((fake_y , yyclap))
+    t = np.linspace(xx[0]+1e-5*length, xx[-1]-1e-5*length, knots)
+    s = interp.splrep(xx, yyclap, task=-1, t=t[1:-2])
+    # normalize to "no change" at x->0
+    der0 = interp.splev(0., s, 1)
+    norm_fact = 1./der0
+    # print("n before/after %d/%d"%(nx,len(xx)))
+    norm_fact = yyclap.mean()/xx.mean()
+    # print('comparison old_fact ', old_der, ' new_fact ',norm_fact)
+    yyclap_norm = yyclap / norm_fact
+    # model only the residual to the identity
+    s = interp.splrep(xx, yyclap_norm - xx , task=-1, t=t)
+
+    model = interp.splev(xx, s) + xx    # model values
     # compute gain residuals
-    print("nonlin gain residuals : %g"%(model/yyclap_norm-1).std())
+    mask = (yyclap_norm != 0)
+    print("der0 = %f, val0 = %f"%(1+interp.splev(0., interp.splder(s)),interp.splev(0.,s)),"nonlin gain residuals : %g"%(model[mask]/yyclap_norm[mask]-1).std())
     if verbose :     
         print("fit_nonlin loops=%d sig=%f res.max = %f"%(i,sig, res.max()))
     if fullOutput :
