@@ -1,4 +1,4 @@
-from __future__ import print_function
+
 
 try :
     import astropy.io.fits as pf
@@ -7,10 +7,12 @@ except :
 
 import numpy as np
 import scipy.interpolate as interp
+import pickle
+import os.path
 
 try :
     no_clap=False
-    from . import clap_stuff as clap_stuff
+    import bfstuff.clap_stuff as clap_stuff
     print("found clap handling code")
 except ImportError :
     no_clap=True
@@ -54,19 +56,51 @@ def convert_region(str):
     return fortran_to_slice(b[2],b[3]), fortran_to_slice(b[0],b[1])
 
 
+def spline_smooth_overscan(twod_overscan, nknots=20) :
+    """
+    medians the array along x, and smoothes using a spline along y.
+    returns a 1D array (one value per j value).
+    """
+    ped = np.median(twod_overscan, axis = 1)
+    j_values = list(range(len(ped)))
+    nodes = np.linspace(0, len(ped), nknots)
+    spl = interp.splrep(j_values, ped, task=-1, t=nodes[1:-1])
+    ped_smoothed = interp.splev(j_values,spl)
+    return ped_smoothed
+
 # if you happen to add one (derived) class, you have to add in to the
 # dictionnary at the end of this file
 
-class FileHandler :
+class FileHandler(object) :
     """ 
     This default class should work for simulated data w/o overscan, 
     single segment 
     """
-    
+    # this constructor should be called by all derived classes
     def __init__(self,filename, params) :
         self.filename = filename
         self.im = pf.open(self.filename)
         self.params = params
+        # put the corrections into *derived* classes because they are specific
+        # and put them into the class, so that they are loaded only once
+        if params is not None and params.correct_nonlinearity and not hasattr(self.__class__,'nonlin_corr') :
+            try :
+                f = open(params.nonlin_corr_file,'rb')
+            except IOError:
+                print('cannot find %s for non linearity correction'%params.nonlin_corr_file)
+                raise
+            print('INFO: loading nonlinearity correction %s'%params.nonlin_corr_file) 
+            self.__class__.nonlin_corr = pickle.load(f)
+            f.close()
+        if params is not None and params.correct_deferred_charge and not hasattr(self.__class__,'dc_corr') :
+            try :
+                f = open(params.deferred_charge_corr_file,'rb')
+            except IOError:
+                print('ERROR : cannot open %s for deferred charge correction'%params.deferred_charge_corr_file)
+                raise
+            print('INFO: loaded deferred charge correction %s'%params.deferred_charge_corr_file) 
+            self.__class__.dc_corr = pickle.load(f)
+            f.close()
 
     
     def segment_ids(self):
@@ -82,22 +116,23 @@ class FileHandler :
     def channel_index(self,segment_id) :
         return 0
     
-    def get_segment(self, segment_id) :
-        """ returns a FITS extension. derived class could do otherwise """ 
+    def __get_fits_extension__(self, segment_id) :
         return self.im[segment_id]
 
     def prepare_segment(self, ext) :
-        """ ext is delivered by get_segment """
-        return np.array(ext.data, dtype = np.float)
+        """ ext is delivered by segment_ids """
+        return np.array(self.__get_fits_extension__(ext).data, dtype = np.float)
 
     def sensor_mask(self, ext) :
+        """ ext is delivered by segment_ids """
         """ In case there is a mask associated to the sensor
         """
         return None
 
     def clip_frame(self, image) :
-        return image[self.params.margin.bottom:-self.params.margin.top,
-                self.params.margin.left:-self.params.margin.right]
+        """ image is returned from prepare_segment() """
+        return image[self.params.margin_bottom:-self.params.margin_top,
+                self.params.margin_left:-self.params.margin_right]
 
     def ped_stat(self, segment_id) :
         """ some sort of average and sigma of pedestal """
@@ -118,12 +153,28 @@ class FileHandler :
 class FileHandlerParisBench(FileHandler):
     """ 
     As its name says. It works to UC-Davis Archon images,
-    and perhaps other LSST sources. If the hotodiode extension is not found,
+    and perhaps other LSST sources. If the photodiode extension is not found,
     the content of EXPTIME is returned
     """
     exptime_key_name = "EXPTIME"
+    masterbias = None
+    dead = None
+
+    def __init__(self,filename, params) :
+        # call the base class ctor
+        super(FileHandlerParisBench , self).__init__(filename,params)
+        # add loading the master bias file (once per run, it is a class
+        # attribute), could belong to the base class.
+        if params is not None and hasattr(params,'subtract_bias') and params.subtract_bias and FileHandlerParisBench.masterbias is None :
+            FileHandlerParisBench.masterbias = pf.open('masterbias.fits')
+            print('loaded masterbias.fits for bias subtraction')
+        if FileHandlerParisBench.dead is None and params is not None and hasattr(params,'use_dead') and params.use_dead and os.path.isfile('dead.fits'):
+            FileHandlerParisBench.dead = pf.open('dead.fits')
+            print('INFO: loaded mask : dead.fits')
+        
     
     def segment_ids(self) :
+        # iterates over extensions to find which ones contain CCD data
         extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('CHAN')]
         if len(extensions) == 0:
           extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('Segm')]
@@ -131,70 +182,126 @@ class FileHandlerParisBench(FileHandler):
           extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('SEGM')]
         return extensions
 
-    def channel_index(self,extension) :
+    def channel_index(self, segment_id) :
+        """ segment_id is delivered by segment_ids """
+        extension = self.__get_fits_extension__(segment_id)
         return extension.header['CHANNEL']
-    
-    def subtract_overscan_and_trim(self, extension, return_overscan = False) :
+
+    def chip_id(self) :
+        return 0
+
+    def overscan_bounding_box(self, segment_id) :
+        """
+        segment_id comes from segment_ids
+        return two slices (y, x)
+        """
+        extension = self.__get_fits_extension__(segment_id)
         datas_y,datas_x  = convert_region(extension.header['DATASEC'])
-        segment = np.array(extension.data, dtype= np.float)
-        regions = self.params.regions
+        whole_extension_shape = extension.data.shape
+        # Along x, the overscan starts where datasec stops
+        # Along y, the overscan follow datasec
+        bb = datas_y, slice(datas_x.stop, whole_extension_shape[0])
+        return bb
+
+    def datasec_bounding_box(self, segment_id) :
+        """
+        segment_id is obtained from segment_ids
+        return two slices (y, x)
+        """
+        extension = self.__get_fits_extension__(segment_id)
+        data_y,data_x  = convert_region(extension.header['DATASEC'])
+        return data_y, data_x
+
+    def amp_data(self, segment_id) :
+        """
+        segment_id is obtained from segment_ids
+        returns the whole amp data (with pre/over-scans)
+        """
+        return np.array(self.__get_fits_extension__(segment_id).data, dtype= np.float)
+    
+    def subtract_overscan_and_trim(self, segment_id, bias, return_overscan = False) :
+        pixels = self.amp_data(segment_id)
+        # figure out teh overscan bounding box
+        oy,ox = self.overscan_bounding_box(segment_id)
+        full_obb = oy,ox
+        # skip a few columns, "contaminated" by deferred signals.
+        obb = oy, slice(ox.start + self.params.overscan_skip, ox.stop)
         if False:
             # a single value
-            pedestal = np.median(segment[datas_y, regions.xover])
+            pedestal = np.median(pixels[obb])
         else :
             # pedestal per line
-            ped = np.median(segment[datas_y, regions.xover], axis = 1)
-            j_values = range(len(ped))
-            nodes = np.linspace(0, len(ped), 20)
-            spl = interp.splrep(j_values, ped, task=-1, t=nodes[1:-1])
-            ped_smoothed = interp.splev(j_values,spl)
-            pedestal = ped_smoothed[:,np.newaxis]
-        im = segment[datas_y, datas_x]-pedestal
+            pedestal = spline_smooth_overscan(pixels[obb])
+            pedestal = pedestal[:,np.newaxis]
+        datasec_y, datasec_x = self.datasec_bounding_box(segment_id)
+        im = pixels[datasec_y, datasec_x]-pedestal
+        if bias is not None:
+            bias_data = bias.data
+            # a few sanity checks
+            assert bias_data.shape == pixels.shape, " Expect bias and current images  to have the same raw size %s "%self.filename
+            bias_datasec = convert_region(bias.header['DATASEC'])
+            assert bias_datasec == (datasec_y, datasec_x), " Datasec for bias and image %s are different"%self.filename
+            im -= bias_data[datasec_y, datasec_x]
         if return_overscan :
-            # overscan starts right after the physcal data
-            over = segment[data_y, data_x.stop:] 
-            return im, over
+            return im, pixels[full_obb]-pedestal
         return im
-    
-    def prepare_segment(self, extension) :
+        
+    def correct_nonlin(self, im, channel, chip) :
+        s = self.nonlin_corr[channel]
+        return interp.splev(im,s)
+
+    def correct_deferred_charge(self, image, chip_id, channel):
+        """ 
+        image: physical image (trimmed)
+        chip_id is ignored in this routine (there is a single chip on the bench)
+        channel : returned by channel_index()
+        "image" is altered "in place"
         """
+        delta = self.dc_corr[channel](image[:,1:])
+        # for simulating deferred charge, signs would be opposite 
+        image[:,1:] += delta
+        image[:, :-1] -= delta
+    
+    def prepare_segment(self, segment_id) :
+        """
+        segment_id comes from segment_ids
         delivers the segment data, ready for use.
         """
-        im = self.subtract_overscan_and_trim(extension)
-        channel = self.channel_index(extension)
+        bias = None
+        if self.masterbias is not None :   
+            bias = self.masterbias[segment_id] 
+        im = self.subtract_overscan_and_trim(segment_id, bias)
+        channel = self.channel_index(segment_id)
         if self.params.correct_nonlinearity :
-            s = self.params.nonlin_corr[channel]
-            im1 = interp.splev(im,s)
-            im = im1
+            im = self.correct_nonlin(im, channel, self.chip_id()) 
         if self.params.correct_deferred_charge :
-            self.correct_deferred_charge(im, channel)
+            self.correct_deferred_charge(im, channel, self.chip_id())
         return im
 
-    def ped_stat(self, segment):
-        datas_y,dats_x  = convert_region(segment.header['DATASEC'])
-        im = np.array(segment.data, dtype= np.float)
-        sig = np.std(np.median(im[datas_y, self.params.regions.xover],1))
-        ped = np.median(im[datas_y, self.params.regions.xover])
+    def ped_stat(self, segment_id):
+        # this routine is only used to provide diagnostics, not values
+        # for pedestal subtraction
+        extension = self.__get_fits_extension__(segment_id)
+        full_obb = self.overscan_bounding_box(segment_id)
+        # skip the first columns, as done when subtracting
+        oy,ox = full_obb
+        obb = oy, slice(ox.start + self.params.overscan_skip, ox.stop)
+        overscan = np.array(extension.data, dtype= np.float)[obb]
+        sig = np.std(np.median(overscan,axis=1))
+        ped = np.median(overscan)
         return ped,sig
 
     def rescale_before_subtraction(self) :
+        """
+        works for both Paris and SLAC
+        """
         is_not_dark = not (self.im[0].header.get('IMGTYPE',default='NONE').lower().startswith('dark'))
         is_not_bias = not (self.im[0].header.get('IMGTYPE',default='NONE').lower().startswith('bias'))
         return is_not_dark and is_not_bias
 
-    def correct_deferred_charge(self, image, channel):
-        """ 
-        image: physical image (trimmed)
-        channel : returned by channel_index()
-        """
-        delta = self.params.dc_corr[channel](image[:,1:])
-        # for simulating deferred charge, signs would be opposite 
-        image[:,1:] += delta
-        image[:, :-1] -= delta    
-
     def check_images(self, other) :
         if self.im[0].header[self.exptime_key_name] != other.im[0].header[self.exptime_key_name] :
-            print("%s and %s ' have different exposure times ! .... ignoring them"%(self.im1.filename,self.im2.filename))
+            print("%s and %s ' have different exposure times ! .... ignoring them"%(self.filename, other.filename))
             return false
         return True
 
@@ -218,11 +325,193 @@ class FileHandlerParisBench(FileHandler):
         i = self.filename.rfind('.')
         return self.filename[i-6:i]
 
+    # def check_image : parent class
 
-    def channel_index(self,extension) :
-        return extension.header['CHANNEL']
+import os
+from scipy.stats import sigmaclip
+
+# used for the analysis of the SLAC photodiode timeline
+def clipped_average(d, cut=4.) :
+    c, low, upp = sigmaclip(d,cut,cut)
+    return c.mean()
+
+class SlacBot(FileHandlerParisBench) :
+    """
+    Try to change as little as possible w.r.t Paris/Davis
+    """
+    exptime_key_name = "EXPTIME"
+
+    
+    def segment_ids(self) :
+        # iterates over extensions to find which ones contain CCD data
+        extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('CHAN')]
+        if len(extensions) == 0:
+          extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('Segment')]
+        if len(extensions) == 0:
+          extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('SEGM')]
+        return extensions
+
+    # def channel_index(self, use the one from Paris, i.e. the CHANNEL key.
+    #The alternative is to parse the EXTNAME key which reads Segment%d
+
+
+    def chip_id(self) :
+        return self.im[0].header['RAFTBAY'].strip()+'_'+self.im[0].header['CCDSLOT'].strip()
+
+    # try with the parent class (i.e. ParisBench) one.
+    """
+    def subtract_overscan_and_trim(self, extension, return_overscan = False) :
+        datas_y,datas_x  = convert_region(extension.header['DATASEC'])
+        segment = np.array(extension.data, dtype= np.float)
+        xover = slice(datas_x.stop+ self.params.overscan_skip, segment.shape[1])
+        if False:
+            # a single value
+            pedestal = np.median(segment[datas_y, xover])
+        else :
+            # pedestal per line
+            ped_smoothed = spline_smooth_overscan(segment[datas_y, xover])
+            pedestal = ped_smoothed[:,np.newaxis]
+        im = segment[datas_y, datas_x]-pedestal
+        if return_overscan :
+            # overscan starts right after the physical data
+            over = segment[data_y, data_x.stop:] 
+            return im, over
+        return im
+    """
+    
+    def correct_nonlin(self, im, channel, chip) :
+        """
+        the (nonlin.pkl) file in principle contains a dictionnary of 
+        dictionnaries of (scipy.interpolate) splines. The file is loaded 
+        by the main program, and provided through "params" to the constructor.
+        chip is cooked up by chip_id()
+        """
+        # the sckpy splines consists of 3 elements: knots, coeffs, degree
+        # s = self.nonlin_corr[chip][channel]
+        # use one file per chip
+        s = self.nonlin_corr[channel]
+        t,c,k = s
+        # the spline value is ridiculous when out of the training domain
+        #
+        below = (im <= t[0])
+        above = (im >= t[-1])
+        val_below = interp.splev(t[0], s)
+        val_above = interp.splev(t[-1], s)
+        # the spline encodes the *correction* only,
+        correction = interp.splev(im, s)
+        correction[below] = val_below
+        correction[above] = val_above
+        return im+correction
+
+    def sensor_mask(self, amp_id):
+        if self.dead is None:
+            return None
+        return self.dead[amp_id].data
+
+
+    def correct_deferred_charge(self, image, channel, chip):
+        """ 
+        image: physical image (trimmed)
+        channel : returned by channel_index()
+        chip: returned by chip_id()
+        "image" is altered "in place"
+        """
+        try :
+            # the correction is implemented as a polynomial
+            # p = self.dc_corr[chip][channel]
+            # use one file per chip, easier in production:
+            s = self.dc_corr[channel]
+        except KeyError :
+            print('WARNING :missing deferred charge corr for chip', chip,' channel',channel)
+            return
+        t,c,k = s
+        xmin = t[0]
+        # patch the model above and below the "training interval"
+        valmin = interp.splev(xmin, s)
+        xmax = t[-1]
+        valmax = interp.splev(xmax, s)
+        im_source = image[:,1:]
+        delta = interp.splev(im_source, s)
+        index = (im_source < xmin)
+        delta[index] = valmin
+        index = (im_source > xmax)
+        delta[index] = valmax
+        # for simulating deferred charge, signs would be opposite 
+        image[:,1:] += delta
+        image[:, :-1] -= delta
+    
+    def my_diode_integral(self) :
+        """
+        measure integrated charge from photo diode
+        return a measurement and its name (both ascii)
+        There is a photodiode at SLAC but the data is not stored in the 
+        fits files
+        """
+        path = self.filename
+        if os.path.islink(path) :
+            path = os.path.dirname(self.filename)+'/'+os.readlink(path)
+        # photdiode file name
+        filename = os.path.dirname(path)+'/Photodiode_Readings.txt'
+        d = np.loadtxt(filename) 
+        t = d[:,0]
+        I = d[1:,1]
+        dt = t[1:]-t[:-1]
+        I = I*dt
+        # numerical derivative
+        der = I[1:]-I[:-1]
+        # search for peaks
+        i1 = np.argmax(der)
+        i2 = np.argmin(der)
+        start = (min(i1,i2)+1)
+        stop = (max(i1,i2)+1)
+        margin = 2
+        # robust average before and after
+        if start-margin>0 :
+            w_before = slice(0,start-margin)
+            val_before = clipped_average(I[w_before])
+            n_before = start-margin
+        else :
+            val_before=0
+            n_before=0
+        if stop+margin<len(I):
+            w_after = slice(stop+margin,len(I))
+            val_after = clipped_average(I[w_after])
+            n_after = len(I)-stop-margin
+        if (n_before+n_after>0) :
+            ped = (n_before*val_before+n_after*val_after)/(n_after+n_before)
+        else :
+            print("WARNING: unable to determine a pedestal on %s"%filename)
+            ped = 0
+        integral = (I-ped).sum() # all time interval are equal in practice
+        return integral
+
+    def other_sensors(self):
+        exptime = self.im[0].header[self.exptime_key_name] 
+        if exptime != 0:
+            path = self.filename
+            if os.path.islink(path) :
+                path = os.path.dirname(self.filename)+'/'+os.readlink(path)
+            # photdiode file name
+            filename = os.path.dirname(path)+'/Photodiode_Readings.txt'
+            # Borrowed from mondiode_value in eotest
+            t,I = np.loadtxt(filename).transpose() 
+            Ithresh = (min(I) + max(I))/5 + min(I)
+            I -= np.median(I[np.where(I < Ithresh)])
+            integral = sum((I[1:] + I[:-1])/2*(t[1:] - t[:-1]))
+        else :
+            integral = 0
+        # the following line was used to compare the algorithms. Seem to be similar, on average.
+        # return [integral, self.my_diode_integral(), exptime] , [ 'd', 'd0', 'expt']
+        return [integral, exptime] , [ 'd', 'expt']
+
+    def time_stamp(self):
+        seqnum = self.im[0].header['SEQNUM']
+        # dayobs is yyyymmdd, dop the year so that it fits on 32 bits
+        dayobs = self.im[0].header['DAYOBS'][4:]
+        return int('%s%04d'%(dayobs,seqnum))
 
     # def check_image : parent class
+
 
 class FileHandlerESABench(FileHandlerParisBench):
     """ 
@@ -238,9 +527,6 @@ class FileHandlerESABench(FileHandlerParisBench):
     def segment_ids(self) :
         return [0,1]
 
-    def get_segment(self, segment_id) :
-        return segment_id
-    
     def channel_index(self,amp_id) :
         return amp_id
 
@@ -266,7 +552,7 @@ class FileHandlerESABench(FileHandlerParisBench):
         data = self.amp_data(extension)[self.image_start_y:self.image_end_y,] 
         # handle overscan now: smooth it along y and subtract 1 value per row
         ped = np.median(data[:, self.overscan_start_x+3:], axis = 1)
-        j_values = range(len(ped))
+        j_values = list(range(len(ped)))
         nodes = np.linspace(0, len(ped), 20)
         spl = interp.splrep(j_values, ped, task=-1, t=nodes[1:-1])
         # 1d array
@@ -283,7 +569,7 @@ class FileHandlerESABench(FileHandlerParisBench):
                     
     def ped_stat(self, amp_id):
         amp_data = self.amp_data(amp_id)[:,11:]
-        overscan_region = amp_data[:, self.overscan_start_x+3:]
+        overscan_region = amp_data[:, self.overscan_start_x+self.params.oversan_skip:]
         # rms over y of the median along x
         sig = np.std(np.median(overscan_region,1))
         ped = np.median(overscan_region) # could be mean
@@ -310,23 +596,40 @@ class FileHandlerESABench(FileHandlerParisBench):
     def channel_index(self,extension) :
         return extension
 
+# the file contains two polynomial per channel
+    def correct_deferred_charge(self, image, channel):
+        """ 
+        image: physical image (trimmed)
+        channel : returned by channel_index()
+        for Plato, the correction is two polynomials for two pixels
+        The data file contains a dictionnary of list of np.polynomials
+        """
+        [corr_fun1, corr_fun2] = self.dc_corr[channel]
+        delta1 = np.polyval(corr_fun1,image[:,1:])
+        delta2 = np.polyval(corr_fun2,image[:,2:])
+        # for simulating deferred charge, signs would be opposite 
+        image[:,1:] += delta1
+        image[:, :-1] -= delta1
+        image[:,2:] += delta2
+        image[:, :-2] -= delta2
+
         
     # def check_images(self, other) : parent routine OK
 
 # One extension 4 amps
 class FileHandlerHSC(FileHandlerESABench):
     """ 
-    As its name says. images with a single HDU that contains four amps. 
-    info about the raw image layout is encoded in some ad'hoc way in headers 
+    As its name says. Images with a single HDU that contains four amps. 
+    info about the raw image layout is encoded in some ad'hoc way in headers. 
     """
     exptime_key_name = "EXPTIME"  # To be checked
 
     def __init__(self,filename, params) :
         FileHandler.__init__(self,filename,params)
         self.whole_image = np.array(self.im[0].data, dtype=np.float)
-        chip = int(self.im[0].header['DET-ID'])
+        self.chip = int(self.im[0].header['DET-ID'])
         self.dead = None
-        dead_name = 'dead/master_dead_%03d.fits.gz'%chip
+        dead_name = 'dead/master_dead_%03d.fits.gz'%self.chip
         try:
             self.dead = pf.open(dead_name)[0].data
         except :
@@ -335,16 +638,23 @@ class FileHandlerHSC(FileHandlerESABench):
     def segment_ids(self) :
         return [1,2,3,4]
 
-    def get_segment(self, segment_id) :
-        return segment_id
-    
     def channel_index(self,amp_id) :
         return amp_id
         
     def amp_data(self,amp_id):
         return self.whole_image[self.amp_region(amp_id)]
 
-
+    def chip_id(self) :
+        return self.im[0].header['DET-ID']
+    
+    def correct_nonlin(self, im, channel, chip) :
+        try :
+            p = self.nonlin_corr[chip][channel]
+        except KeyError :
+            print('WARNING :missing nonlin corr for chip %d channel %d'%(chip,channel))
+            return im
+        return np.polyval(p,im)
+    
     def sensor_mask(self, amp_id):
         if self.dead is None:
             return None
@@ -372,7 +682,7 @@ class FileHandlerHSC(FileHandlerESABench):
     
     def subtract_overscan_and_trim(self, amp, return_overscan = False) :
         """ 
-        the argument comes from get_segment 
+        the argument comes from segment_ids
         the first read out pixel is the first returned (along x)
         """
         amp_region = self.amp_region(amp)
@@ -409,6 +719,20 @@ class FileHandlerHSC(FileHandlerESABench):
         ped = np.median(overscan_data) # could be mean
         return ped,sig
 
+    def correct_deferred_charge(self, image, channel):
+        """ 
+        image: physical image (trimmed)
+        channel : returned by channel_index()
+        for HSC, the correction is simply a polynomial.
+        The data file contains a dictionnary of dictionnaries of np.polynomials
+        """
+        corr_fun = self.dc_corr[self.chip][channel]
+        delta = np.polyval(corr_fun,image[:,1:])
+        # for simulating deferred charge, signs would be opposite 
+        image[:,1:] += delta
+        image[:, :-1] -= delta    
+
+    
     def rescale_before_subtraction(self) :
         return True
 
@@ -420,8 +744,10 @@ class FileHandlerHSC(FileHandlerESABench):
         return "%f"%c1, 'c'
 
     def time_stamp(self):
-        exp_id =  self.im[0].header['EXP-ID']
-        return int(exp_id[4:10])
+        #exp_id =  self.im[0].header['EXP-ID']
+        #return int(exp_id[4:])
+        return  self.im[0].header['MJD']
+
 
     def channel_index(self,extension) :
         return extension
@@ -430,4 +756,4 @@ class FileHandlerHSC(FileHandlerESABench):
     # def check_images(self, other) : parent routine OK
 
 # dictionnary used for user selection
-file_handlers={'D':FileHandler, 'P' : FileHandlerParisBench, 'E':FileHandlerESABench, 'H': FileHandlerHSC}
+file_handlers={'D':FileHandler, 'P' : FileHandlerParisBench, 'E':FileHandlerESABench, 'H': FileHandlerHSC, 'S': SlacBot}
