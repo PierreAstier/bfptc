@@ -10,9 +10,9 @@ except ImportError :
     
 import numpy as np
 import sys
-import bfstuff.envparams as envparams
+import bfptc.envparams as envparams
 
-from bfstuff.filehandlers import *
+from bfptc.filehandlers import *
 
 
 import argparse

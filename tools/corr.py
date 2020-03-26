@@ -1,10 +1,10 @@
-#!/usr/bin/env python 
+#!/usr/bin/env python
 
-from __future__ import print_function
+
 
 try :
     import astropy.io.fits as pf
-except :
+except ImportError :
     import pyfits as pf
 
     
@@ -12,79 +12,13 @@ import numpy as np
 import sys
 
 
-
-# the same routine could be written using (numpy) MaskedArrays.
-# They do not seem that efficient, and we'll use a floating point mask
-# to compute its Fourier transform
-def find_mask(im, nsig, w=None) :
-    if w is None : w = np.ones(im.shape)
-    #  mu is used for sake of numerical precision in the sigma
-    # computation, and is needed (at full precision) to identify outliers. 
-    count = w.sum()
-    # different from (w*im).mean()
-    mu = (w*im).sum()/count
-    # same comment for the variance. 
-    sigma = np.sqrt((((im-mu)*w)**2).sum()/count)
-    for iter in range(3) :
-        outliers = np.where(np.abs((im-mu)*w)>nsig*sigma)
-        w[outliers] = 0
-        #  does not work :
-        # count = im.size-ouliers[0].size
-        count = w.sum()
-        mu = (w*im).sum()/count
-        newsig = np.sqrt((((im-mu)*w)**2).sum()/count)
-        if (np.abs(sigma-newsig)<0.02*sigma) :
-            sigma = newsig
-            break
-        sigma = newsig
-    return w
-
 def write_fits(filename, d) :
     l = pf.HDUList()
     l.append(pf.ImageHDU(data=d))
     l.writeto(filename, clobber=True)
     l.close()
 
-# a simplified utilty to compute the sky background.
 
-def fit_back(im, stepx, stepy=None) :
-    """
-    fits a polynomial sky to the image. Misses a mask argument
-    """
-    if stepy is None : stepy = stepx
-    nx = im.shape[0]/stepx
-    if nx*stepx<im.shape[0] : nx += 1
-    ny = im.shape[1]/stepy
-    if ny*stepy<im.shape[1] : ny += 1
-    medians = np.ndarray((nx,ny))
-    xpos = np.ndarray(nx)
-    ypos = np.ndarray(ny)
-    for ix in range(nx) :
-        maxx = min(stepx*(ix+1), im.shape[0])
-        xpos[ix] = 0.5*(maxx-1+stepx*ix)
-        for iy in range(ny):
-            maxy = min(stepy*(iy+1), im.shape[1])
-            ypos[iy] = 0.5*(maxy-1+stepy*iy)
-            medians[ix,iy] = np.median(im[ix*stepx:maxx, iy*stepy:maxy])
-    nx,ny = im.shape
-    # some sort of reduced coordinates for numerical stability.
-    # It does improve things, by several orders of magnitude.
-    if True :
-        ax=1./float(nx)
-        bx = -0.5
-        ay = 1./float(ny)
-        by = -0.5
-    else :
-        ax=1.
-        bx=0.
-        ay=1.
-        by=0.
-    x,y = np.meshgrid(ax*xpos+bx,ay*ypos+by,indexing='ij')
-    p = pol2d(x,y,medians,2)
-    # now evaluate at all positions of the image
-    x,y = np.meshgrid(np.linspace(bx,ax*(nx-1)+bx, num=nx),
-                      np.linspace(by,ay*(ny-1)+by, num=ny)+by,indexing='ij')
-    return p.eval(x,y)
 
 # This class is mostly justified by writing the "cov" function with
 # only 2 arguments.
@@ -210,6 +144,8 @@ def fft_size(s) :
     return int(2**(x+1))
     
 
+from bfptc.cov_utils import find_mask, fit_back
+
 
 class ComputeCov :
     def __init__(self, im1,im2, params) :
@@ -225,34 +161,39 @@ class ComputeCov :
         v1,t1 = self.im1.other_sensors()
         v2,t2 = self.im2.other_sensors()
         if v1 != '' :
-            other_values =(float(v1),float(v2))
-            other_tags = [t1+'1',t2+'2']
+            other_values = tuple(np.atleast_1d(v1))+tuple(np.atleast_1d(v2))
+            other_tags = [t+'1' for t in np.atleast_1d(t1)]+[t+'2' for t in np.atleast_1d(t2)]
         else :
             other_values = ()
-            other_tags = ()
+            other_tags = []
         extensions = self.im1.segment_ids()
         
         for ext in extensions :
-            ext1 = self.im1.get_segment(ext)
-            sim1_full = self.im1.prepare_segment(ext1)
+            sim1_full = self.im1.prepare_segment(ext)
             sim1 = self.im1.clip_frame(sim1_full)
-            ped1, sig_ped1 = self.im1.ped_stat(ext1)
-            ext2 = self.im2.get_segment(ext)
-            sim2_full = self.im2.prepare_segment(ext2)
+            ped1, sig_ped1 = self.im1.ped_stat(ext)
+            sim2_full = self.im2.prepare_segment(ext)
             sim2 = self.im2.clip_frame(sim2_full)
-            ped2, sig_ped2 = self.im2.ped_stat(ext2)
+            ped2, sig_ped2 = self.im2.ped_stat(ext)
             #
-            channel = im1.channel_index(ext1)
-            assert channel==im2.channel_index(ext2) , 'Different channel indices in a pair'
-            nsig2 = 4
-            w1 = find_mask(sim1, self.params.nsig1)
-            w2 = find_mask(sim2, self.params.nsig1)
-            # check is there are masks provided by the sensor itself (e.g. vignetting)
+            channel = im1.channel_index(ext)
+            assert channel==im2.channel_index(ext) , 'Different channel indices in a pair'
+            # check fs there are masks provided by the sensor itself (e.g. vignetting)
             ws = self.im1.sensor_mask(ext)
             if ws is not None : 
                 ws = self.im1.clip_frame(ws)
-                w1 *= (1-ws)
-                w2 *= (1-ws)
+                w1 = (1-ws)
+                w2 = (1-ws)
+                if w1.sum() ==0 : continue
+            else :
+                w1 = None
+                w2 = None
+            if self.params.subtract_sky_before_clipping :
+                w1 = find_mask(sim1 - fit_back(sim1,50), self.params.nsig_image, w1)
+                w2 = find_mask(sim2 - fit_back(sim2,50), self.params.nsig_image, w2)
+            else:
+                w1 = find_mask(sim1, self.params.nsig_image, w1)
+                w2 = find_mask(sim2, self.params.nsig_image, w2)
 
             if w1.sum() ==0 or w2.sum() == 0 : continue
 
@@ -260,18 +201,16 @@ class ComputeCov :
             mu1 = masked_mean(sim1, w1)
             mu2 = masked_mean(sim2, w2)
             fact =  mu1/mu2 if (rescale_before_subtraction)  else 1
-            print("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, ext))
+            print(("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, ext)))
 
             if abs(fact-1)>0.1 :
-                print("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, ext))
+                print(("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, ext)))
                 continue
             # Compensate the flux difference, so that if the images are 
             # proportional to each other, any spatial structure vanishes.
             diff = (sim1*mu2-sim2*mu1)/(0.5*(mu1+mu2))
             w12 = w1*w2
-            if self.params.subtract_sky :
-                diff -= fit_back(diff,250)
-            wdiff = find_mask(diff, self.params.nsig2, w12)
+            wdiff = find_mask(diff, self.params.nsig_diff, w12)
             w = w12*wdiff
             sh = diff.shape
             self.params.fft_shape = (fft_size(sh[0]+self.params.maxrange), fft_size(sh[1]+self.params.maxrange))
@@ -288,51 +227,37 @@ class ComputeCov :
 import pickle
 import scipy.interpolate as interp
 
-from bfstuff.filehandlers import *
-
-
-class parameters :
-
-    class regions :
-        def __init__(self):
-            self.xover = slice(525,540)
-            # E2V "bad" lines : 1983 and 1982
-            # in segment coordinates
-
-    class margin :
-        pass
-
-    def __init__(self):
-        self.regions= self.regions()
-        self.margin = self.margin()
-        self.margin.bottom = self.margin.top = 20
-        self.margin.right = self.margin.left = 20
-        self.debug = 0
-        self.maxrange = 28 # can be modified on the command line
-
+from bfptc.filehandlers import *
+import bfptc.envparams as envparams
 
 import argparse
 
 if __name__ == "__main__" :   
-    params = parameters()
+    params = envparams.EnvParams()
+    # the default there can be overriden in a file provided
+    # through the BFPARAMS environment variable
 
     # should provide a way to alter that from the command line
-    help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in file_handlers.iteritems()])
+    help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in list(file_handlers.items())])
     
     usage=" to compute covariances of differences of pairs of flats"
     parser = argparse.ArgumentParser(usage=usage)
     parser.add_argument("pairs_file", help= " list of pairs (2 filenames per line)")
+    parser.add_argument( "-f", "--file-handler", 
+                         dest = "file_handler_tag",
+                         required = True,                         
+                         help = help_fh_tags)
     
     parser.add_argument( "-t", "--tuple_name",
                        dest = "tuple_name", 
                        type = str,
                        help = "output tuple name (default : %(default)s)", 
-                       default = "tuple.list"  )
+                       default = "tuple"  )
     parser.add_argument( "-m", "--maxrange",
                        type=int,
                        dest = "maxrange", 
                        help = "how far we evaluate correlations", 
-                       default = 28  )
+                       default = None  )
     parser.add_argument( "-j", "--jmax",
                        dest = "jmax", 
                        type = int,
@@ -346,57 +271,29 @@ if __name__ == "__main__" :
                        action="store_true",  # default is False
                        dest = "correct_nonlinearity", 
                        help = "correct non linearity (using ./nonlin.pkl)")
-    parser.add_argument( "-s", "--subtract_sky", 
-                         action="store_true",  # default is False
-                         dest = "subtract_sky", 
-                         help = "subtract a smooth background from the difference")
-    parser.add_argument( "-f", "--file-handler", 
-                         dest = "file_handler_tag",
-                         help = help_fh_tags)
 
     options = parser.parse_args()
-#    if (len(args) == 0) : 
-#        parser.print_help()
-#        sys.exit(1)
+    #    if (len(args) == 0) : 
+    #        parser.print_help()
+    #        sys.exit(1)
 
-    params.maxrange= options.maxrange
-    params.subtract_sky= options.subtract_sky
-
+    if options.maxrange is not None :
+        params.maxrange= options.maxrange
+        
     try :
         file_handler = file_handlers[options.file_handler_tag]
     except KeyError:
-        print('valid values for -f :\n%s',help_fh_tags)
+        print(('valid values for -f :\n%s',help_fh_tags))
         sys.exit(0)
-    
+
+    params.nsig_image = 5 # number of sigams on each input images
+    params.nsig_diff = 4 # on the difference
     params.correct_deferred_charge = options.correct_deferred_charge
-    if options.correct_deferred_charge:
-        try :
-            f = open('cte.pkl','rb')
-        except IOError:
-            print('cannot find ./cte.pkl for deferred charge correction')
-            raise
-        print('INFO: loading deferred charge correction') 
-        params.dc_corr = pickle.load(f)
-        f.close()
-
     params.correct_nonlinearity = options.correct_nonlinearity
-    params.nsig1 = 5 # number of sigams on each input images
-    params.nsig2 = 4 # on the difference
-    if options.correct_nonlinearity :
-        try :
-            f = open('nonlin.pkl','rb')
-        except IOError:
-            print('cannot find ./nonlin.pkl for deferred charge correction')
-            raise
-        print('INFO: loading nonlinearity correction') 
-        params.nonlin_corr = pickle.load(f)
-        f.close()
 
-    
-    
-    #tuple = open(options.tuple_name,"w")
-    #tuple.write('@OPTIONS %s\n'%' '.join(sys.argv))
-    print('line commmand options : %s\n'%' '.join(sys.argv))
+    print(('line commmand options : %s\n'%' '.join(sys.argv)))
+    print(('control parameters\n:',params))
+            
     np.seterr(invalid='raise')
     tuple_records = []
     
@@ -406,7 +303,7 @@ if __name__ == "__main__" :
             f1 = l.split()[0]
             f2 = l.split()[1]
         except :
-            print("ignore line in pair file : %s"%l)
+            print(("ignore line in pair file : %s"%l))
             continue
 
         im1 = file_handler(f1,params)
@@ -414,8 +311,12 @@ if __name__ == "__main__" :
         cc = ComputeCov(im1,im2, params)
         t1 = im1.time_stamp()
         t2 = im2.time_stamp()
-        tuple_entries, tags = cc.compute_cov()
-        alltags = tags + [' t1','t2']
+        entries, tags = cc.compute_cov()
+        # add t1, t2 at the end (tuples are immutable, hence new list) 
+        tuple_entries = []
+        for row in entries :
+            tuple_entries.append(row+(t1,t2))
+        alltags = tags + ['t1','t2']
 
         #if i==0 : # write tuple header (column names)
             #for tag in tags.split() : tuple.write('#%s:\n'%tag)
@@ -423,9 +324,19 @@ if __name__ == "__main__" :
         #for line in tuple_entries :
             #tuple.write("%s %s %s\n"%(line, t1, t2))
         tuple_records += tuple_entries
-    print('alltags', alltags)
+    print(('alltags', alltags))
     print(' Converting a list of tuples into a numpy recarray')
-    nt = np.rec.fromrecords(tuple_records, names=alltags)
-    print('writing tuple %s to disk'%options.tuple_name)
+    # shrink the formats in order to reduce disk space
+    format = []
+    for k,x in enumerate(tuple_records[0]) :
+        if x.__class__ in [int, np.int64] : 
+            format.append('<i4')
+        else :
+            if x.__class__ in [float,np.float64] : format.append('<f4')
+            else :
+                print(('cannot find a format for tag %s'%alltags[k],' class ', x.__class__))
+                sys.exit(1)
+    nt = np.rec.fromrecords(tuple_records, dtype={'names': alltags, 'formats':format})
+    print(('writing tuple %s to disk'%options.tuple_name))
     np.save(options.tuple_name, nt)
 

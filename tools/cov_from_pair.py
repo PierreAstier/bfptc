@@ -10,8 +10,8 @@ except ImportError :
     
 import numpy as np
 import sys
-import bfstuff.pol2d as pol2d
-import bfstuff.ptcfit as ptcfit
+import bfptc.pol2d as pol2d
+import bfptc.ptcfit as ptcfit
 
 # the same routine could be written using (numpy) MaskedArrays.
 # They do not seem that efficient, and we'll use a floating point mask
@@ -324,8 +324,8 @@ def plot_cov_average(nt, chip, mu_min=0, mu_max=1e30, maxr=20, figname=None) :
     
 #import pickle
 
-from bfstuff.filehandlers import *
-import bfstuff.envparams as envparams
+from bfptc.filehandlers import *
+import bfptc.envparams as envparams
 
 import os
 

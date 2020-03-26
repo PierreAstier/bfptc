@@ -1,6 +1,6 @@
 #!/usr/bin/env python 
 
-from __future__ import print_function
+
 
 import numpy as np
 import sys
@@ -11,7 +11,7 @@ serial overscan regions.  The tuple typically contains 5 columns: last
 real pixle valu, next pixel, next to next , channel, and som time acquisition time.  It finds the
 proper image columns using FileHandler functions """
     
-from bfstuff.filehandlers import *
+from bfptc.filehandlers import *
 
 def process_file(fh) :
     """
@@ -23,25 +23,22 @@ def process_file(fh) :
     extensions = fh.segment_ids()
     res = {}
     for ext in extensions :
-        x = fh.get_segment(ext)
-        data,over = fh.subtract_overscan_and_trim(x, return_overscan = True)
+        data,over = fh.subtract_overscan_and_trim(ext, None, return_overscan = True)
         assert data.shape[0] == over.shape[0]
-        res[ext] = (data[: , -1], over[:,0], over[:,1])
+        res[ext] = (data[: , -1], over[:,0], over[:,1],data.mean())
     return res
 
-
-class parameters:
-    pass
+import bfptc.envparams as envparams
 
 import argparse
 
 if __name__ == "__main__" :   
-    params = parameters()
+    params = envparams.EnvParams()
 
     # should provide a way to alter that from the command line
-    help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in file_handlers.iteritems()])
+    help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in file_handlers.items()])
     
-    usage=" to collect last physical pixel of each line ane overscan pixels, for CTI studies"
+    usage=" to collect last physical pixel of each line and overscan pixels, for CTI studies"
     parser = argparse.ArgumentParser(usage=usage)
     parser.add_argument("listfile", help= " list of filenames (several files per line are OK)")
     
@@ -66,11 +63,15 @@ if __name__ == "__main__" :
         sys.exit(0)
     
 
-    tuple = open(options.tuple_name,"w")
-    tuple.write('@OPTIONS %s\n'%' '.join(sys.argv))
-    tuple.write('#amp:\n#im:\n#o1:\n#o2:\n#t:\n#end\n')
+    #tuple = open(options.tuple_name,"w")
+    #tuple.write('@OPTIONS %s\n'%' '.join(sys.argv))
+    #tuple.write('#amp:\n#im:\n#o1:\n#o2:\n#mu : \n#t:\n#end\n')
+    params.overscan_skip = 5
+    params.subtract_bias = False
+    print('control parameters:\n',params)
     
     f = open(options.listfile)
+    rows = []
     for i,l in enumerate(f.readlines()) :
         try :
             names = l.split()
@@ -80,11 +81,14 @@ if __name__ == "__main__" :
 
         for name in names :
             im = file_handler(name,params)
+            print("processing %s"%name)
             time = im.time_stamp()
             data = process_file(im)
-            for amp,pixels in data.iteritems() :
-                im,o1,o2  = pixels
+            for amp,pixels in data.items() :
+                im,o1,o2,mu  = pixels
                 for k in range(len(im)):
-                    tuple.write('%d %f %f %f %s\n'%(amp,im[k], o1[k], o2[k], time))
-    tuple.close()
+                    rows.append((amp,im[k], o1[k], o2[k], k, mu, time))
+    tags = ['amp','im','o1','o2','j','mu','t']
+    nt = np.rec.fromrecords(rows, names=tags)
+    np.save(options.tuple_name, nt)
     #

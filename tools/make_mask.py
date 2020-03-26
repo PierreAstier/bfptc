@@ -10,15 +10,15 @@ except ImportError :
     
 import numpy as np
 import sys
-import bfstuff.envparams as envparams
+import bfptc.envparams as envparams
 
-from bfstuff.filehandlers import *
+from bfptc.filehandlers import *
 
 
 import argparse
 
 
-from bfstuff.cov_utils import find_mask, fit_back
+from bfptc.cov_utils import find_mask, fit_back
 
 if __name__ == "__main__" :   
     params = envparams.EnvParams()
