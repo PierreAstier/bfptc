@@ -89,6 +89,16 @@ if __name__ == "__main__" :
                 for k in range(len(im)):
                     rows.append((amp,im[k], o1[k], o2[k], k, mu, time))
     tags = ['amp','im','o1','o2','j','mu','t']
-    nt = np.rec.fromrecords(rows, names=tags)
+    format = []
+    for k,x in enumerate(rows[0]) :
+        if x.__class__ in [int, np.int64] : 
+            format.append('<i4')
+        else :
+            if x.__class__ in [float,np.float64] : format.append('<f4')
+            else :
+                print(('cannot find a format for tag %s'%alltags[k],' class ', x.__class__))
+                sys.exit(1)
+    nt = np.rec.fromrecords(rows, dtype={'names': tags, 'formats':format})
+    print(('writing tuple %s to disk'%options.tuple_name))
     np.save(options.tuple_name, nt)
     #
