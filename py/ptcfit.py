@@ -9,7 +9,7 @@ For the time beeing it uses as input a  numpy recarray which contains
 one row per covariance and per pair: see routine make_cov_array
 """
 
-from ptc_utils import mad as mad
+from bfptc.ptc_utils import mad as mad
 
 
 def compute_old_fashion_a(fit, mu_el) :

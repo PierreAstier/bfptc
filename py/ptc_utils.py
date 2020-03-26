@@ -30,7 +30,7 @@ def mad(data, axis=0, scale=1.4826):
 
 
 
-import ptcfit
+import bfptc.ptcfit as ptcfit
 
 class load_params :
     """
