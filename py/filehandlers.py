@@ -10,7 +10,7 @@ import scipy.interpolate as interp
 
 try :
     no_clap=False
-    import bfstuff.clap_stuff as clap_stuff
+    from . import clap_stuff as clap_stuff
     print("found clap handling code")
 except ImportError :
     no_clap=True
