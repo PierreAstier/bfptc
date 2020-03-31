@@ -155,7 +155,7 @@ class ComputeCov :
     
     def compute_cov(self):
         if (im1.check_images(im2) == False) :
-            return []
+            return [], []
         tuple_rows = []
         rescale_before_subtraction = im1.rescale_before_subtraction()
         v1,t1 = self.im1.other_sensors()
@@ -312,6 +312,7 @@ if __name__ == "__main__" :
         t1 = im1.time_stamp()
         t2 = im2.time_stamp()
         entries, tags = cc.compute_cov()
+        if len(entries) == 0: continue
         # add t1, t2 at the end (tuples are immutable, hence new list) 
         tuple_entries = []
         for row in entries :
