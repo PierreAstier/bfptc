@@ -302,7 +302,7 @@ class FileHandlerParisBench(FileHandler):
     def check_images(self, other) :
         if self.im[0].header[self.exptime_key_name] != other.im[0].header[self.exptime_key_name] :
             print("%s and %s ' have different exposure times ! .... ignoring them"%(self.filename, other.filename))
-            return false
+            return False
         return True
 
     def other_sensors(self):        
