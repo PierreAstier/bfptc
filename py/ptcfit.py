@@ -109,7 +109,7 @@ def symmetrize(a):
     return asym
 
 
-from fitparameters import FitParameters
+from bfptc.fitparameters import FitParameters
 import copy
 
 from scipy.optimize import leastsq
