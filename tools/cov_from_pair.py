@@ -373,7 +373,7 @@ if __name__ == "__main__" :
         print("ERROR: need at least two files as input !")
         sys.exit(1)
 
-    for k in  range(len(options.flat_files)/2) :
+    for k in  range(len(options.flat_files)//2) :
         f1 = options.flat_files[2*k]
         f2 = options.flat_files[2*k+1]
 
