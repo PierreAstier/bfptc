@@ -200,11 +200,14 @@ class ComputeCov :
             #      print("masked fractions %f %f"%(float(m1.mask.sum())/sim1.size, float(m2.mask.sum())/sim2.size))
             mu1 = masked_mean(sim1, w1)
             mu2 = masked_mean(sim2, w2)
-            fact =  mu1/mu2 if (rescale_before_subtraction)  else 1
+            fact =  mu1/mu2 if (mu2 != 0 and rescale_before_subtraction)  else 1
             print(("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, ext)))
 
             if abs(fact-1)>0.1 :
                 print(("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, ext)))
+                continue
+            if (mu1 == 0 and mu2 == 0) :
+                print('skipping those because their averages are both exactly 0, which is suspicious')
                 continue
             # Compensate the flux difference, so that if the images are 
             # proportional to each other, any spatial structure vanishes.
@@ -291,13 +294,14 @@ if __name__ == "__main__" :
     params.correct_deferred_charge = options.correct_deferred_charge
     params.correct_nonlinearity = options.correct_nonlinearity
 
-    print(('line commmand options : %s\n'%' '.join(sys.argv)))
-    print(('control parameters\n:',params))
+    print('command line : %s\n'%' '.join(sys.argv))
+    print('control parameters\n:',params)
             
     np.seterr(invalid='raise')
     tuple_records = []
     
     f = open(options.pairs_file)
+    alltags=[]
     for i,l in enumerate(f.readlines()) :
         try :
             f1 = l.split()[0]
@@ -325,19 +329,26 @@ if __name__ == "__main__" :
         #for line in tuple_entries :
             #tuple.write("%s %s %s\n"%(line, t1, t2))
         tuple_records += tuple_entries
+    if len(tuple_records) == 0 :
+        print(' no data was actually processed, writing an empty tuple file')
+        open(options.tuple_name,'w')
+        sys.exit(1)
     print(('alltags', alltags))
     print(' Converting a list of tuples into a numpy recarray')
-    # shrink the formats in order to reduce disk space
-    format = []
-    for k,x in enumerate(tuple_records[0]) :
-        if x.__class__ in [int, np.int64] : 
-            format.append('<i4')
-        else :
-            if x.__class__ in [float,np.float64] : format.append('<f4')
+    if False : 
+        # shrink the formats in order to reduce disk space
+        format = []
+        for k,x in enumerate(tuple_records[0]) :
+            if x.__class__ in [int, np.int64] : 
+                format.append('<i4')
             else :
-                print(('cannot find a format for tag %s'%alltags[k],' class ', x.__class__))
-                sys.exit(1)
-    nt = np.rec.fromrecords(tuple_records, dtype={'names': alltags, 'formats':format})
+                if x.__class__ in [float,np.float64] : 
+                    format.append('<f4')
+                else :
+                    print(('cannot find a format for tag %s'%alltags[k],' class ', x.__class__))
+                    sys.exit(1)
+        nt = np.rec.fromrecords(tuple_records, dtype={'names': alltags, 'formats':format})
+    nt = np.rec.fromrecords(tuple_records, names = alltags)
     print(('writing tuple %s to disk'%options.tuple_name))
     np.save(options.tuple_name, nt)
 
