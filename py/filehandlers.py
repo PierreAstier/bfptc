@@ -250,7 +250,7 @@ class FileHandlerParisBench(FileHandler):
         s = self.nonlin_corr[channel]
         return interp.splev(im,s)
 
-    def correct_deferred_charge(self, image, chip_id, channel):
+    def correct_deferred_charge(self, image, channel, chip_id):
         """ 
         image: physical image (trimmed)
         chip_id is ignored in this routine (there is a single chip on the bench)
@@ -310,15 +310,18 @@ class FileHandlerParisBench(FileHandler):
         measure integrated charge from photo diode
         return a measurement and its name (both ascii)
         """
+        c1 = 0.
         if not no_clap : # means we found the code
             # poorly written piece of code.
             # should rather integrate the CLAP and raise if absent.
-            a1 = clap_stuff.process_one_file(self.im)
-            c1 = a1[1]
-            if a1[1] == 0 :
-                c1 = a1[0] # EXPTIME from extension 0
-        else :
-            c1 = 0.
+            try :
+                a1 = clap_stuff.process_one_file(self.im)
+                c1 = a1[1]
+                if a1[1] == 0 :
+                    c1 = a1[0] # EXPTIME from extension 0
+            except TypeError :
+                pass
+
         return "%f"%c1, 'c'
 
     def time_stamp(self):
@@ -545,8 +548,11 @@ class FileHandlerESABench(FileHandlerParisBench):
     image_start_y = 6
     image_end_y = 2249
 
-    def subtract_overscan_and_trim(self, extension, return_overscan=False) :
-        """ the argument comes from get_segment """
+    def subtract_overscan_and_trim(self, extension, bias, return_overscan=False) :
+        """ 
+        the extension number comes from get_segment 
+        bias is not used (yet?)
+        """
         # black horizontal stripes at the bottom and top
         # trim along y
         data = self.amp_data(extension)[self.image_start_y:self.image_end_y,] 
@@ -597,12 +603,13 @@ class FileHandlerESABench(FileHandlerParisBench):
         return extension
 
 # the file contains two polynomial per channel
-    def correct_deferred_charge(self, image, channel):
+    def correct_deferred_charge(self, image, channel, chip):
         """ 
         image: physical image (trimmed)
         channel : returned by channel_index()
         for Plato, the correction is two polynomials for two pixels
         The data file contains a dictionnary of list of np.polynomials
+        chip is ignored
         """
         [corr_fun1, corr_fun2] = self.dc_corr[channel]
         delta1 = np.polyval(corr_fun1,image[:,1:])
@@ -623,17 +630,18 @@ class FileHandlerHSC(FileHandlerESABench):
     info about the raw image layout is encoded in some ad'hoc way in headers. 
     """
     exptime_key_name = "EXPTIME"  # To be checked
+    dead = None
 
     def __init__(self,filename, params) :
         FileHandler.__init__(self,filename,params)
         self.whole_image = np.array(self.im[0].data, dtype=np.float)
         self.chip = int(self.im[0].header['DET-ID'])
-        self.dead = None
+        # handle dead, if required
         dead_name = 'dead/master_dead_%03d.fits.gz'%self.chip
-        try:
-            self.dead = pf.open(dead_name)[0].data
-        except :
-            print('did not find %s'%dead_name)
+        if FileHandlerHSC.dead is None and params is not None and hasattr(params,'use_dead') and params.use_dead :
+            FileHandlerHSC.dead = pf.open(dead_name)[0].data
+            print('INFO: loaded mask %s'%dead_name)
+        # nonlin and deferred charge corrections are loaded in the base class constructor. 
     
     def segment_ids(self) :
         return [1,2,3,4]
@@ -649,7 +657,11 @@ class FileHandlerHSC(FileHandlerESABench):
     
     def correct_nonlin(self, im, channel, chip) :
         try :
-            p = self.nonlin_corr[chip][channel]
+            #  handle 2 different cases: one file contains corrections for all chips, 
+            # or the file is chip_specific
+            p = self.nonlin_corr[channel]
+            if p.__class__ == dict :
+                p = self.nonlin_corr[chip][channel]
         except KeyError :
             print('WARNING :missing nonlin corr for chip %d channel %d'%(chip,channel))
             return im
@@ -680,10 +692,11 @@ class FileHandlerHSC(FileHandlerESABench):
     def overscan_data(self,amp_id):
         return self.whole_image[self.overscan_region(amp_id)]
     
-    def subtract_overscan_and_trim(self, amp, return_overscan = False) :
+    def subtract_overscan_and_trim(self, amp, bias, return_overscan = False) :
         """ 
-        the argument comes from segment_ids
+        the first argument comes from segment_ids
         the first read out pixel is the first returned (along x)
+        bias is not used (yet?)
         """
         amp_region = self.amp_region(amp)
         data = self.amp_data(amp)
@@ -719,19 +732,17 @@ class FileHandlerHSC(FileHandlerESABench):
         ped = np.median(overscan_data) # could be mean
         return ped,sig
 
-    def correct_deferred_charge(self, image, channel):
+    def correct_deferred_charge(self, image, channel, chip):
         """ 
         image: physical image (trimmed)
         channel : returned by channel_index()
-        for HSC, the correction is simply a polynomial.
-        The data file contains a dictionnary of dictionnaries of np.polynomials
+        chip is ignored.
         """
-        corr_fun = self.dc_corr[self.chip][channel]
-        delta = np.polyval(corr_fun,image[:,1:])
+        spline = self.dc_corr[channel]
+        delta = interp.splev(image[:,1:],spline)
         # for simulating deferred charge, signs would be opposite 
         image[:,1:] += delta
-        image[:, :-1] -= delta    
-
+        image[:, :-1] -= delta
     
     def rescale_before_subtraction(self) :
         return True
@@ -741,7 +752,7 @@ class FileHandlerHSC(FileHandlerESABench):
     def other_sensors(self):
         """ no photodiode: return integration time """
         c1 = self.im[0].header[self.exptime_key_name]
-        return "%f"%c1, 'c'
+        return c1, 'c'
 
     def time_stamp(self):
         #exp_id =  self.im[0].header['EXP-ID']
