@@ -986,3 +986,13 @@ def binplot(x, y, nbins=10, robust=False, data=True,
     return xbinned, yplot, yerr
 
     
+def make_index(index):
+    s = np.argsort(index)
+    n = np.bincount(index.astype('int'))
+    n = n[n != 0]
+    l = []
+    p = 0
+    for i in n:
+        l.append(s[p:p + i])
+        p = p + i
+    return l
