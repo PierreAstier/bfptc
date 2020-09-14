@@ -337,6 +337,10 @@ if __name__ == "__main__" :
     # the default there can be overriden in a file provided
     # through the BFPARAMS environment variable
     
+    # list of file handler classes : 
+    help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in list(file_handlers.items())])
+
+
     usage=" to compute covariances from a flat pair"
     parser = argparse.ArgumentParser(usage=usage)
     parser.add_argument("flat_files", help= " input files ", nargs='+')
@@ -350,6 +354,10 @@ if __name__ == "__main__" :
                        type = str,
                        help = "output tuple name (default : %(default)s)", 
                        default = "tuple.npy"  )
+    parser.add_argument( "-f", "--file-handler",
+                         dest = "file_handler_tag",
+                         help = help_fh_tags)
+
     options = parser.parse_args()
     #    if (len(args) == 0) : 
     #        parser.print_help()
@@ -357,8 +365,15 @@ if __name__ == "__main__" :
 
     if options.maxrange is not None :
         params.maxrange= options.maxrange
-        
-    file_handler = file_handlers['P'] # P stands for Paris
+
+    if options.file_handler_tag is not None:
+        try :
+            file_handler = file_handlers[options.file_handler_tag]
+        except KeyError:
+            print(('valid values for -f :\n%s',help_fh_tags))
+            sys.exit(0)
+    else :
+        file_handler = file_handlers['P'] # P stands for Paris
     
     params.nsig_image = 5 # number of sigmas on each input image
     params.nsig_diff = 4 # on the difference
