@@ -86,7 +86,7 @@ class FileHandler(object) :
         if params is not None and params.correct_nonlinearity and not hasattr(self.__class__,'nonlin_corr') :
             try :
                 f = open(params.nonlin_corr_file,'rb')
-            except IOError:
+            except (IOError, OSError) as e :
                 print('cannot find %s for non linearity correction'%params.nonlin_corr_file)
                 raise
             print('INFO: loading nonlinearity correction %s'%params.nonlin_corr_file) 
@@ -455,38 +455,42 @@ class SlacBot(FileHandlerParisBench) :
             path = os.path.dirname(self.filename)+'/'+os.readlink(path)
         # photdiode file name
         filename = os.path.dirname(path)+'/Photodiode_Readings.txt'
-        d = np.loadtxt(filename) 
-        t = d[:,0]
-        I = d[1:,1]
-        dt = t[1:]-t[:-1]
-        I = I*dt
-        # numerical derivative
-        der = I[1:]-I[:-1]
-        # search for peaks
-        i1 = np.argmax(der)
-        i2 = np.argmin(der)
-        start = (min(i1,i2)+1)
-        stop = (max(i1,i2)+1)
-        margin = 2
-        # robust average before and after
-        if start-margin>0 :
-            w_before = slice(0,start-margin)
-            val_before = clipped_average(I[w_before])
-            n_before = start-margin
-        else :
-            val_before=0
-            n_before=0
-        if stop+margin<len(I):
-            w_after = slice(stop+margin,len(I))
-            val_after = clipped_average(I[w_after])
-            n_after = len(I)-stop-margin
-        if (n_before+n_after>0) :
-            ped = (n_before*val_before+n_after*val_after)/(n_after+n_before)
-        else :
-            print("WARNING: unable to determine a pedestal on %s"%filename)
-            ped = 0
-        integral = (I-ped).sum() # all time interval are equal in practice
-        return integral
+        try :
+            d = np.loadtxt(filename) 
+            t = d[:,0]
+            I = d[1:,1]
+            dt = t[1:]-t[:-1]
+            I = I*dt
+            # numerical derivative
+            der = I[1:]-I[:-1]
+            # search for peaks
+            i1 = np.argmax(der)
+            i2 = np.argmin(der)
+            start = (min(i1,i2)+1)
+            stop = (max(i1,i2)+1)
+            margin = 2
+            # robust average before and after
+            if start-margin>0 :
+                w_before = slice(0,start-margin)
+                val_before = clipped_average(I[w_before])
+                n_before = start-margin
+            else :
+                val_before=0
+                n_before=0
+            if stop+margin<len(I):
+                w_after = slice(stop+margin,len(I))
+                val_after = clipped_average(I[w_after])
+                n_after = len(I)-stop-margin
+            if (n_before+n_after>0) :
+                ped = (n_before*val_before+n_after*val_after)/(n_after+n_before)
+            else :
+                print("WARNING: unable to determine a pedestal on %s"%filename)
+                ped = 0
+            integral = (I-ped).sum() # all time interval are equal in practice
+            return integral
+        except IOError :
+            print('Could not find %s, just hoping it is usesless'%filename)
+            return -1
 
     def other_sensors(self):
         exptime = self.im[0].header[self.exptime_key_name] 
@@ -496,12 +500,16 @@ class SlacBot(FileHandlerParisBench) :
                 path = os.path.dirname(self.filename)+'/'+os.readlink(path)
             # photdiode file name
             filename = os.path.dirname(path)+'/Photodiode_Readings.txt'
-            # Borrowed from mondiode_value in eotest
-            t,I = np.loadtxt(filename).transpose() 
-            Ithresh = (min(I) + max(I))/5 + min(I)
-            I -= np.median(I[np.where(I < Ithresh)])
-            integral = sum((I[1:] + I[:-1])/2*(t[1:] - t[:-1]))
-        else :
+            try :
+                # Borrowed from mondiode_value in eotest
+                t,I = np.loadtxt(filename).transpose() 
+                Ithresh = (min(I) + max(I))/5 + min(I)
+                I -= np.median(I[np.where(I < Ithresh)])
+                integral = sum((I[1:] + I[:-1])/2*(t[1:] - t[:-1]))
+            except IOError :
+                print('Could not find %s, just hoping it is usesless'%filename)
+                integral = -1
+        else : # exptime is zero
             integral = 0
         # the following line was used to compare the algorithms. Seem to be similar, on average.
         # return [integral, self.my_diode_integral(), exptime] , [ 'd', 'd0', 'expt']
@@ -738,8 +746,12 @@ class FileHandlerHSC(FileHandlerESABench):
         channel : returned by channel_index()
         chip is ignored.
         """
+        """
         spline = self.dc_corr[channel]
         delta = interp.splev(image[:,1:],spline)
+        """
+        poly = self.dc_corr[channel]
+        delta = np.polyval(poly, image[:,1:])
         # for simulating deferred charge, signs would be opposite 
         image[:,1:] += delta
         image[:, :-1] -= delta
