@@ -9,6 +9,8 @@ import numpy as np
 import scipy.interpolate as interp
 import pickle
 import os.path
+import glob
+
 
 try :
     no_clap=False
@@ -354,8 +356,15 @@ class SlacBot(FileHandlerParisBench) :
           extensions = [i for i,ext in enumerate(self.im) if ext.header.get('EXTNAME',default='NONE').startswith('SEGM')]
         return extensions
 
-    # def channel_index(self, use the one from Paris, i.e. the CHANNEL key.
-    #The alternative is to parse the EXTNAME key which reads Segment%d
+        
+    def channel_index(self, ext):
+        """
+        ext should come from segment_ids().
+        channel_index is the one that will go to the output tuple.
+        SLAC people use the EXTNAME key (which reads Segment%d)  so, we do the same.
+        We consider these numbers as decimal (although they are rather octal).
+        """
+        return int(re.search('\d+',self.im[ext].header['EXTNAME']).group())
 
 
     def chip_id(self) :
@@ -442,7 +451,21 @@ class SlacBot(FileHandlerParisBench) :
         # for simulating deferred charge, signs would be opposite 
         image[:,1:] += delta
         image[:, :-1] -= delta
-    
+
+    def photodiode_filename(self) :
+        """
+        find out the photodiode file name in the exposure directory, for this image.
+        """
+        path = self.filename
+        if os.path.islink(path) :
+            path = os.path.dirname(self.filename)+'/'+os.readlink(path)
+        # photodiode file name : at some point the date and time was added into the file name.
+        l = glob.glob(os.path.dirname(path)+'/Photodiode_Readings*.txt')
+        if len(l) != 1 : 
+            print ("Several or no matches for the photo diode file in directory %s"%path)
+            return os.path.dirname(path)+'/Photodiode_Readings*.txt' # just for printout, it does not exist
+        return l[0]
+
     def my_diode_integral(self) :
         """
         measure integrated charge from photo diode
@@ -450,11 +473,7 @@ class SlacBot(FileHandlerParisBench) :
         There is a photodiode at SLAC but the data is not stored in the 
         fits files
         """
-        path = self.filename
-        if os.path.islink(path) :
-            path = os.path.dirname(self.filename)+'/'+os.readlink(path)
-        # photdiode file name
-        filename = os.path.dirname(path)+'/Photodiode_Readings.txt'
+        filename = self.photodiode_filename()
         try :
             d = np.loadtxt(filename) 
             t = d[:,0]
@@ -495,11 +514,8 @@ class SlacBot(FileHandlerParisBench) :
     def other_sensors(self):
         exptime = self.im[0].header[self.exptime_key_name] 
         if exptime != 0:
-            path = self.filename
-            if os.path.islink(path) :
-                path = os.path.dirname(self.filename)+'/'+os.readlink(path)
-            # photdiode file name
-            filename = os.path.dirname(path)+'/Photodiode_Readings.txt'
+            # photodiode file name
+            filename = self.photodiode_filename()
             try :
                 # Borrowed from mondiode_value in eotest
                 t,I = np.loadtxt(filename).transpose() 
