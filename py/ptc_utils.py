@@ -87,6 +87,9 @@ def load_data(tuple_name,params) :
             gain = cc.get_gain()
             if (this_maxmu*gain < params.maxmu_el) :
                 this_maxmu = params.maxmu_el/gain
+                if this_maxmu<0 :
+                    print(" the initialization went crazy hope the full fit, gets better")
+                    break
                 continue
             cc.set_maxmu_electrons(params.maxmu_el)
             break
