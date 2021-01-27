@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-import pyfits as pf
+try:
+    import pyfits as pf
+except ModuleNotFoundError :
+    import astropy.io.fits as pf
 import numpy as np
 import re
 
@@ -72,10 +75,13 @@ def assemble_image(fh, biasfh=None) :
    
 if __name__ == "__main__" :
     import sys
+    if len(sys.argv) < 3:
+        print("usage : %s <mef_image_name> <assembled_image_name>"%sys.argv[0])
+        sys.exit(1)
     fh = pf.open(sys.argv[1])
     data = assemble_image(fh)
     #pf.writeto(sys.argv[2], data.astype(np.float32) , header = fh[0])
-    pf.writeto(sys.argv[2], data.astype(np.int32), header=fh[0].header, clobber=True )
+    pf.writeto(sys.argv[2], data.astype(np.int32), header=fh[0].header, overwrite=True )
     
         
         
