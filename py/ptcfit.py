@@ -181,7 +181,7 @@ class cov_fit :
         gain = self.params['gain'].full[0]
         old_chi2 = 1e30
         for iter in range(5):   # iterate the fit to account for higher orders
-            # the chi2 does not ncessarily go down, so one could
+            # the chi2 does not necessarily go down, so one could
             # stop when it increases
             model = self.eval_cov_model() # this computes the full model.
             # loop on lags
@@ -218,7 +218,7 @@ class cov_fit :
         returns cov[Nmu, self.r, self.r]. The PTC is cov[:, 0, 0].
         mu and cov are in ADUs and ADUs squared. to use electrons for both,
         the gain should be set to 1.
-        This routine implments the model in 1905.08677
+        This routine implements the model in 1905.08677
         """
         sa = (self.r, self.r)
         a = self.params['a'].full.reshape(sa)
@@ -323,11 +323,22 @@ class cov_fit :
     
 
     def fit(self, p0 = None, nsig = 5) :
+        """
+        Carries out a fit using scipy.optimize.leastsq.
+        May raise RuntimeError
+        """
         if p0 is None:
             p0 = self.get_param_values()
         n_outliers = 1
         while (n_outliers != 0) : 
-            coeffs, cov_params, _, mesg, ierr = leastsq(self.weighted_res, p0, full_output=True, maxfev=40000)
+            for iter in range(2):
+                try :
+                    coeffs, cov_params, _, mesg, ierr = leastsq(self.weighted_res, p0, full_output=True, maxfev=40000)
+                except RuntimeError :
+                    if mesg.find('Number of calls to function has reached') == 0:
+                        print ('having hard time to fit, trying to insist')
+                    else:
+                        raise RuntimeError(msg)
             wres = self.weighted_res(coeffs)
             # do not count the outliers as significant : 
             sig = mad(wres[wres != 0]) 
