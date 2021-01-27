@@ -29,7 +29,7 @@ def chip_to_raft(chip_name) :
     chip_size=40
     inter_chip=0.3
     chip_step = chip_size+inter_chip
-    return AffineTransfo(1,0,0,1,j*chip_step,i*chip_step)
+    return AffineTransfo(1,0,0,1,i*chip_step,j*chip_step)
 
 def chip_to_fp(chip_id):
     return raft_to_fp(chip_id[:3]).compose(chip_to_raft(chip_id[4:]))
@@ -98,26 +98,43 @@ def amp_patch_fp(chip_id, amp_id) :
     return Rectangle((x0, y0), x1 - x0, y1 - y0)
 
 
-def plot_fp(ax, values, z_range=None, cm=pl.cm.hot) :
+from scipy.stats import sigmaclip
+
+def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=None) :
     """
     ax :a matplotlib Axes
     values : a dict of dict of values (indexed by chip and amp respectively)
     appends plotting data to ax.
+    z_range : limits of values to plot (None)
+    sig_clip : number of sigmas to clip (None)
     """
     # Borrowed the pltting mechanics from
     # https://github.com/lsst-camera-dh/jh-ccs-utils.git
     # /python/focal_plane_plotting.py
+    def id(x):
+        return x
+    if get_data is None : 
+        to_plot = values
+    else : # The input contains more than what is to be plotted
+        # cook up a dictionnary with a single scalar
+        to_plot={}
+        for chip,chip_data in values.items() :
+            to_plot[chip] = { amp:get_data(input) for amp,input in chip_data.items()} 
     if z_range is None :
         z_values = []
-        for chip_val in values.values() :
+        for chip_val in to_plot.values() :
             z_values.extend(chip_val.values())
-        z_range = min(z_values), max(z_values)
+        if sig_clip is None :
+            z_range = min(z_values), max(z_values)
+        else :
+            _, zmin,zmax = sigmaclip(z_values, sig_clip,sig_clip)
+            z_range=(zmin,zmax)
     def mapped_value(val) :
         return max(0, min(1., ((val - z_range[0])
                                /(z_range[1] - z_range[0]))))
     facecolors=[]
     patches = []
-    for chip_id, det_val in values.items():
+    for chip_id, det_val in to_plot.items():
         for amp_id,val in det_val.items() :
             patches.append(amp_patch_fp(chip_id,amp_id))
             facecolors.append(cm(mapped_value(val)))
