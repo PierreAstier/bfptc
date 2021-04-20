@@ -17,29 +17,68 @@ def raft_to_fp(raft_name) :
     # raft size in mm ?
     raft_size = 130
     # there are 5 rafts in both directions. place the center at (0,0)
-    return AffineTransfo(1.,0.,0.,1.,float(i-2.5)*raft_size, float(j-2.5)*raft_size)
+    transfo = AffineTransfo(1.,0.,0.,1.,float(i-2.5)*raft_size, float(j-2.5)*raft_size)
+    if not is_corner_raft(raft_name): return transfo
+    # corner rafts are rotated
+    # shift to raft center
+    shift = AffineTransfo(1,0,0,1, -raft_size*0.5, -raft_size*0.5 )
+    if raft_name == 'R00' :
+        t = AffineTransfo.Rot180().compose(shift)
+    if raft_name == 'R04' :
+        t = AffineTransfo.Rot90().compose(shift)
+    if raft_name == 'R40' :
+        t = AffineTransfo.Rot270().compose(shift)
+    if raft_name == 'R44' :
+        t = shift
+    rot = shift.inverse_transfo().compose(t)
+    return transfo.compose(rot)
 
-def chip_to_raft(chip_name) :
+def is_corner_raft(raft_name) :
+    return raft_name in ['R00','R04','R40','R44']
+
+def chip_to_raft(raft_name, chip_name) :
+    if is_corner_raft(raft_name) :
+        return chip_to_raft_corner(raft_name,chip_name)
+    return chip_to_raft_science(chip_name)
+
+def chip_to_raft_science(chip_name) :
     """
     transforms chip coordinates to raft coordinates
-    """
+    """    
     # chip name is,e.g., S12
     j = int(chip_name[1])
     i = int(chip_name[2])
+    assert(i>=0 and i<3 and j>=0 and j<3)
     chip_size=40
-    inter_chip=0.3
+    inter_chip=2.5 # from  obs_lsst cameraHeader.yaml
     chip_step = chip_size+inter_chip
     return AffineTransfo(1,0,0,1,i*chip_step,j*chip_step)
 
-def chip_to_fp(chip_id):
-    return raft_to_fp(chip_id[:3]).compose(chip_to_raft(chip_id[4:]))
-
-def amp_to_chip_pix(raft_name, amp_id):
+def chip_to_raft_corner(raft_name, chip_name):
     """
+    Rotations are missing !
+    """
+    if chip_name == 'SG0' : # slot 10
+        dx,dy = +42.5,0
+    elif chip_name == 'SG1' : # slot 10
+        dx,dy = 0, +42.5
+    elif chip_name == 'SW0' :# corresponds to lower half of SR slot 00
+        dx,dy = 0, 0
+    elif chip_name ==  'SW1' :# corresponds to upper half of SR slot 00
+        dx,dy = 0, 0.5*42.5
+    else :
+        raise ValueError('Chip name %s does not seem to be a corner raft chip'%chip_name)
+    return AffineTransfo(1,0,0,1,dx,dy)
+
+def chip_to_fp(chip_id):
+    return raft_to_fp(chip_id[:3]).compose(chip_to_raft(chip_id[:3], chip_id[4:]))
+
+def amp_to_chip_pix(chip_name, amp_id):
+    """
+    chip_name should read RRR_CCC
     amp_id should come from the extname fit key, and should
     be two-characters long.
     """
-    # print('amp_id', amp_id, isinstance(amp_id, int), type(amp_id))
     try :
         i = amp_id%10
         j = amp_id//10
@@ -52,13 +91,36 @@ def amp_to_chip_pix(raft_name, amp_id):
     a22_itl = [-1,1]
     dy_itl=[4000,0]
     dy_e2v=[4004,0]
-    if ccd_vendor_dict[raft_name[:3]] == 'ITL' :
-        return AffineTransfo(-1,0,0,a22_itl[j], 512*(i+1), dy_itl[j])
-    else :
+    
+    if ccd_vendor_dict[chip_name[:3]] == 'CORNER' :
+        ccd_name = chip_name[4:]
+        if ccd_name == 'SG0' or ccd_name == 'SG1':
+            return AffineTransfo(-1,0,0,a22_itl[j], 512*(i+1), dy_itl[j])
+        if ccd_name == 'SW0' or ccd_name == 'SW1' :
+            return AffineTransfo(-1,0,0,1, 508*(i+1), 0)
+        raise ValueError(' bad corner raft chip name %s'%ccd_name)
+    # done with corner rafts    
+    try :
+        i = amp_id%10
+        j = amp_id//10
+    except TypeError : # hope it is a string...
+        i = int(amp_id[1])
+        j = int(amp_id[0])
+    assert((i<8) & (j<2)) 
+    a22_e2v = [-1,1]
+    a11_e2v = [1,-1]
+    a22_itl = [-1,1]
+    dy_itl=[4000,0]
+    dy_e2v=[4004,0]
+    if ccd_vendor_dict[chip_name[:3]] == 'ITL' :
+        return AffineTransfo(-1,0,0,a22_itl[j], 508*(i+1), dy_itl[j])
+    elif  ccd_vendor_dict[chip_name[:3]] == 'E2V' :
         if j==0:
             return AffineTransfo(a11_e2v[j],0,0,a22_e2v[j], 512*i, dy_e2v[j])
         if j==1 :
             return AffineTransfo(a11_e2v[j],0,0,a22_e2v[j], 512*(i+1), dy_e2v[j])
+
+        
 
         
 def amp_extend(chip_id, amp_id):
@@ -67,22 +129,22 @@ def amp_extend(chip_id, amp_id):
     chip_id should contain the raft name.
     """
     if ccd_vendor_dict[chip_id[:3]] == 'ITL' :
-        return 512,2000
+        return 508,2000
     else :
         return 512, 2002
         
-def amp_to_chip_mm(raft_name, amp_id):
+def amp_to_chip_mm(chip_name, amp_id):
     """
     returns the transfo from amp coordinates(pixels) to chip coordinates (mm)
     """
     #
     pix_size = 1e-2 # pixel size in mm
     scale = AffineTransfo(1e-2,0,0,1e-2,0,0)
-    t =  amp_to_chip_pix(raft_name, amp_id)
+    t =  amp_to_chip_pix(chip_name, amp_id)
     return scale.compose(t)
 
 def amp_to_fp(chip_id, amp_id):
-    return chip_to_fp(chip_id).compose(amp_to_chip_mm(chip_id[:3], amp_id))
+    return chip_to_fp(chip_id).compose(amp_to_chip_mm(chip_id, amp_id))
 
 
 def amp_patch_fp(chip_id, amp_id) :
@@ -108,7 +170,7 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
     z_range : limits of values to plot (None)
     sig_clip : number of sigmas to clip (None)
     """
-    # Borrowed the pltting mechanics from
+    # Borrowed the plotting mechanics from
     # https://github.com/lsst-camera-dh/jh-ccs-utils.git
     # /python/focal_plane_plotting.py
     def id(x):
@@ -119,7 +181,8 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
         # cook up a dictionnary with a single scalar
         to_plot={}
         for chip,chip_data in values.items() :
-            to_plot[chip] = { amp:get_data(input) for amp,input in chip_data.items()} 
+            to_plot[chip] = { amp:get_data(input) for amp,input in chip_data.items()}
+            
     if z_range is None :
         z_values = []
         for chip_val in to_plot.values() :
@@ -129,6 +192,7 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
         else :
             _, zmin,zmax = sigmaclip(z_values, sig_clip,sig_clip)
             z_range=(zmin,zmax)
+    print('z_range = ',z_range)
     def mapped_value(val) :
         return max(0, min(1., ((val - z_range[0])
                                /(z_range[1] - z_range[0]))))
@@ -141,8 +205,8 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
     pc =  PatchCollection(patches, facecolors=facecolors)
     ax.add_collection(pc)
     # the limits are not set automatically
-    ax.set_xlim((-320,320))
-    ax.set_ylim((-320,320))
+    ax.set_xlim((-350,350))
+    ax.set_ylim((-350,350))
     # cosmetics
     pl.xlabel('y (mm)')
     pl.ylabel('x (mm)')
@@ -153,9 +217,29 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
     sm.set_array([])
     colorbar=pl.colorbar(sm)
 
-ccd_vendor_dict={'R01':'ITL',
+def plot_hist(values, z_range=None, sig_clip = None, get_data=None) :
+    
+    if get_data is None : 
+        to_plot = [x for x in y.values() for y in values.values()]
+    else : # The input contains more than what is to be plotted
+        # cook up a dictionnary with a single scalar
+        to_plot = []
+        for chip_data in values.values() :
+            to_plot += [get_data(input) for input in chip_data.values()]
+    if z_range is not None:
+        to_plot = np.array(to_plot)
+        index = (to_plot>=z_range[0]) & (to_plot<z_range[1])
+        to_plot = to_plot[index]
+    pl.figure(figsize=(8,8))
+    pl.hist(to_plot)
+
+
+    
+ccd_vendor_dict={'R00': 'CORNER',
+                 'R01':'ITL',
    'R02':'ITL',
    'R03':'ITL',
+    'R04': 'CORNER',
    'R10':'ITL',
    'R20':'ITL',
    'R11':'E2V',
@@ -171,9 +255,10 @@ ccd_vendor_dict={'R01':'ITL',
    'R32':'E2V',
    'R33':'E2V',
    'R34':'E2V',
+    'R40':'CORNER',
    'R41':'ITL',
    'R42':'ITL',
-   'R43':'ITL'}
+                 'R43':'ITL', 'R44':'CORNER'}
         
 
 class AffineTransfo :
@@ -192,6 +277,16 @@ class AffineTransfo :
     def __repr__(self):
         return "xp = %f + %f*x + %f*y\nyp = %f + %f*x + %f*y"%(self.dx,self.a11,self.a12,self.dy,self.a21,self.a22)
 
+
+    def Rot90() :
+        return AffineTransfo(0,1,-1,0,0,0)
+
+    def Rot180():
+        return AffineTransfo(-1,0,0,-1,0,0)
+
+    def Rot270() :
+        return AffineTransfo(0,-1,1,0,0,0)
+    
     def apply(self, x,y) :
         """
         just applies the transformation
