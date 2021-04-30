@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/pbs/home/a/astier/software/anaconda3/bin/python
 try:
     import pyfits as pf
 except ModuleNotFoundError :
@@ -25,63 +25,74 @@ def convert_region(str):
     # swap x and y:
     return fortran_to_slice(b[2],b[3]), fortran_to_slice(b[0],b[1])
 
-def overscan_subtract_and_trim(im, xover, xim, yim) :
-    """
-    subtracts the median (in xover x yim)  of the pedestal
-    and trim the image
-    """
-    pedestal = np.median(im[yim, xover])
-    return im[yim, xim]-pedestal
 
-def assemble_image(fh, biasfh=None) :
+def assemble_image(fh) :
     """
     arguments: pyfits file handle, output file name.
-    if the biasfh is provided, then it is used for bias subtraction.
-    assembles the image using DETSIZE, DATASEC, DETSEC and BIASSEC, afetr BIAS usbtraction
+
     """
-    mh = fh[0].header
+    mh = fh.im[0].header
     sy,sx = detsize  = convert_region(mh['DETSIZE'])
     im = np.ndarray((sy.stop, sx.stop))
-    extensions = [i for i in range(len(fh)) if fh[i].header.get('EXTNAME',default='NONE').startswith('CHAN')]
-    extensions +=  [i for i in range(len(fh)) if fh[i].header.get('EXTNAME',default='NONE').startswith('Segment')]
-    for ext in extensions :
-        f = fh[ext]
-        #DATASEC = '[11:522,1:2002]'
-        #DETSEC  = '[1:512,4004:2003]'
-        #BIASSEC = '[523:544,1:2002]'   / Serial overscan region
-        dats_y,dats_x  = convert_region(f.header['DATASEC'])
-        dets_y, dets_x = convert_region(f.header['DETSEC'])
-        try :
-            bias_y, bias_x = convert_region(f.header['BIASSEC'])
-        except KeyError :
-            biasy = dats_y
-            bias_x = slice(dats_x.stop, f.data.shape[0])
-        rawd = f.data
-        if biasfh is None :
-            im_ext = overscan_subtract_and_trim(rawd, bias_x, dats_x, dats_y)
-        else :
-            bias_ext = biasfh[ext]
-            bias_data = bias_ext.data
-            if bias_data.shape == rawd.shape :
-                im_ext = overscan_subtract_and_trim(rawd-bias_data, bias_x, dats_x, dats_y)
-            else:
-                rawd[datsy,datsx] -= bias_data
-                im_ext = overscan_subtract_and_trim(rawd-bias_data, bias_x, dats_x, dats_y)
-        im[dets_y, dets_x] = im_ext
-
+    ids = fh.segment_ids()
+    for id in ids :
+        detsec = convert_region(fh.im[id].header['DETSEC'])
+        imext = fh.prepare_segment(id)
+        im[detsec] = imext
     return im
 
 
+import argparse
+from bfptc.filehandlers import *
+
    
 if __name__ == "__main__" :
-    import sys
-    if len(sys.argv) < 3:
-        print("usage : %s <mef_image_name> <assembled_image_name>"%sys.argv[0])
-        sys.exit(1)
-    fh = pf.open(sys.argv[1])
+    help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in list(file_handlers.items())])
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_file", help= " input file")
+    parser.add_argument( "-f", "--file-handler",
+                         dest = "file_handler_tag",
+                         help = help_fh_tags,
+                         default = 'S')
+
+    parser.add_argument( "-o", "--output-file",
+                         dest = "output_file",
+                         required = True,
+                         type = str,
+                         help = "output file name ")
+
+    parser.add_argument( "-b", "--bias",
+                         dest = "subtract_bias",
+                         action= "store_true",
+                         help = "subtract bias (masterbias.fits)")
+
+
+    parser.add_argument( "-n", "--nonlin-correction", 
+                         action="store_true",  # default is False
+                         dest = "correct_nonlinearity", 
+                         help = "correct non linearity (using ./nonlin.pkl)")
+    options = parser.parse_args()
+    #    if (len(args) == 0) :                                                  
+    #        parser.print_help()                                                
+    #        sys.exit(1)                                                        
+
+
+    try :
+        file_handler = file_handlers[options.file_handler_tag]
+    except KeyError:
+        print(('valid values for -f :\n%s',help_fh_tags))
+        sys.exit(0)
+
+    
+    options.nonlin_corr_file = './nonlin.pkl'
+    options.overscan_skip = 10
+
+    # could cook up a params record with the proper fields to trigger the bias subtraction
+    fh = file_handler(options.input_file, options)
     data = assemble_image(fh)
     #pf.writeto(sys.argv[2], data.astype(np.float32) , header = fh[0])
-    pf.writeto(sys.argv[2], data.astype(np.int32), header=fh[0].header, overwrite=True )
+    pf.writeto(options.output_file, data.astype(np.float32), header=fh.im[0].header, overwrite=True )
     
         
         
