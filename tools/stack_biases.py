@@ -31,9 +31,18 @@ def my_robust_average(a, axis=None, clip=5, mini_output=True):
     while True:
         ngood = w.sum(axis=axis)
         print(ngood.shape, ngood.sum())
+        ngood_zero = ngood==0 # should never happen
+        if ngood_zero.sum() != 0: # debugging
+            index = np.where(ngood==0)
+            i = index[0][0]
+            j = index[1][0]
+            print('ERROR: all data discarded :  mu sigma i j ', mu[i,j], sig[i,j], i ,j)
+            print(a[:, i,j])
+            print(w[:,i,j])
         aw = a*w
         mu = (aw).sum(axis=axis)/ngood
-        sig = np.sqrt((aw*aw).sum(axis=axis)/ngood-mu*mu)
+        print('count, average ',ngood.sum(), mu.mean())
+        sig = np.sqrt(((aw-mu)**2).sum(axis=axis)/ngood)
         mu.reshape(mushape)
         w = w & (np.abs(a-mu)<=sig*clip)
         if w.sum() == ngood.sum() :
@@ -62,6 +71,18 @@ if __name__ == "__main__" :
                          required = True,
                          help = help_fh_tags)
 
+    parser.add_argument( "-b", "--bias-name", 
+                         dest = "bias_file_name",
+                         default = "masterbias.fits",
+                         help = "name of the output master bias file")
+
+    parser.add_argument( "-s", "--sig-name", 
+                         dest = "sig_bias_file_name",
+                         default = "masterbias_sig.fits",
+                         help = "name of the output master bias *sigma* file")
+
+
+
     options = parser.parse_args()
 #    if (len(args) == 0) : 
 #        parser.print_help()
@@ -85,11 +106,10 @@ if __name__ == "__main__" :
         im = file_handler(file, params)
         ids = im.segment_ids()
         for id in ids :
-            overscan_bb = im.overscan_bounding_box(id)
+            ampdata = im.amp_data(id) # just for the size
+            ampdata = np.zeros_like(ampdata)
             datasec = im.datasec_bounding_box(id)
-            ampdata = im.amp_data(id)
-            smoothed_overscan = spline_smooth_overscan(ampdata[overscan_bb])
-            ampdata[overscan_bb[0], :] -= smoothed_overscan[:, np.newaxis]
+            ampdata[datasec] = im.subtract_overscan_and_trim(id, None)
             if id in list(data.keys()) :
                 data[id].append(ampdata)
             else :
@@ -101,7 +121,9 @@ if __name__ == "__main__" :
     output_fits_sig = pf.HDUList()
     output_fits_sig.append(im.im[0])   
     for id,arrays in data.items() :
-        pixels = np.array(arrays)
+        pixels = np.array(arrays, dtype=np.float32)
+        # free memory, hopefully
+        data[id] = []
         print('averaging extension %d'%id)
         # robust average
         # (the home-made local version is much faster than the saunerie one) 
@@ -114,10 +136,10 @@ if __name__ == "__main__" :
                                        header = im.im[id].header))
         output_fits_sig.append(pf.ImageHDU(data = sig.astype(np.float32),
                                            header = im.im[id].header))
-    filename = 'masterbias.fits'
+    filename = options.bias_file_name
     print('writing master bias to %s'%filename)
     output_fits.writeto(filename, overwrite=True)
-    output_fits_sig.writeto('masterbias_sig.fits', overwrite=True)
+    output_fits_sig.writeto(options.sig_bias_file_name, overwrite=True)
         
 
 
