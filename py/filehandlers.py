@@ -85,7 +85,7 @@ class FileHandler(object) :
         self.params = params
         # put the corrections into *derived* classes because they are specific
         # and put them into the class, so that they are loaded only once
-        if params is not None and params.correct_nonlinearity and not hasattr(self.__class__,'nonlin_corr') :
+        if params is not None and hasattr(params,'correct_nonlinearity') and params.correct_nonlinearity and not hasattr(self.__class__,'nonlin_corr') :
             try :
                 f = open(params.nonlin_corr_file,'rb')
             except (IOError, OSError) as e :
@@ -94,7 +94,7 @@ class FileHandler(object) :
             print('INFO: loading nonlinearity correction %s'%params.nonlin_corr_file) 
             self.__class__.nonlin_corr = pickle.load(f)
             f.close()
-        if params is not None and params.correct_deferred_charge and not hasattr(self.__class__,'dc_corr') :
+        if params is not None and hasattr(params,'correct_deferred_charge') and params.correct_deferred_charge and not hasattr(self.__class__,'dc_corr') :
             try :
                 f = open(params.deferred_charge_corr_file,'rb')
             except IOError:
@@ -223,7 +223,7 @@ class FileHandlerParisBench(FileHandler):
     
     def subtract_overscan_and_trim(self, segment_id, bias, return_overscan = False) :
         pixels = self.amp_data(segment_id)
-        # figure out teh overscan bounding box
+        # figure out the overscan bounding box
         oy,ox = self.overscan_bounding_box(segment_id)
         full_obb = oy,ox
         # skip a few columns, "contaminated" by deferred signals.
@@ -274,9 +274,9 @@ class FileHandlerParisBench(FileHandler):
             bias = self.masterbias[segment_id] 
         im = self.subtract_overscan_and_trim(segment_id, bias)
         channel = self.channel_index(segment_id)
-        if self.params.correct_nonlinearity :
+        if hasattr(self.params,'correct_nonlinearity') and self.params.correct_nonlinearity :
             im = self.correct_nonlin(im, channel, self.chip_id()) 
-        if self.params.correct_deferred_charge :
+        if hasattr(self.params,'correct_deferred_charge') and self.params.correct_deferred_charge :
             self.correct_deferred_charge(im, channel, self.chip_id())
         return im
 
@@ -370,6 +370,78 @@ class SlacBot(FileHandlerParisBench) :
     def chip_id(self) :
         return self.im[0].header['RAFTBAY'].strip()+'_'+self.im[0].header['CCDSLOT'].strip()
 
+
+    def overscan_bounding_box(self, segment_id) :
+        """
+        serial overscan. extends in y into the // overscan
+        segment_id comes from segment_ids
+        return two slices (y, x)
+        """
+        extension = self.__get_fits_extension__(segment_id)
+        datas_y,datas_x  = convert_region(extension.header['DATASEC'])
+        whole_extension_shape = extension.data.shape
+        # Along x, the overscan starts where datasec stops
+        # Along y, the overscan follow datasec
+        bb = slice(datas_y.start, whole_extension_shape[0]), slice(datas_x.stop, whole_extension_shape[1])
+        return bb
+
+    def parallel_overscan_bounding_box(self, segment_id) :
+        """
+        segment_id comes from segment_ids
+        return two slices (y, x)
+        """
+        extension = self.__get_fits_extension__(segment_id)
+        datas_y,datas_x  = convert_region(extension.header['DATASEC'])
+        whole_extension_shape = extension.data.shape
+        # Along x, the overscan starts where datasec stops
+        # Along y, the overscan follow datasec
+        bb = slice(datas_y.stop,whole_extension_shape[0]), slice(datas_x.start, whole_extension_shape[1])
+        return bb
+
+
+
+    def subtract_overscan_and_trim(self, segment_id, bias, return_overscan = False) :
+        # probably, the behvior should be controlled by the parameters.
+        pixels = self.amp_data(segment_id)
+        # figure out the overscan bounding box
+        oy,ox = self.overscan_bounding_box(segment_id)
+        full_obb = oy,ox
+        # skip a few columns, "contaminated" by deferred signals.
+        obb = oy, slice(ox.start + self.params.overscan_skip, ox.stop)
+        if False:
+            # a single value
+            pedestal = np.median(pixels[obb])
+        else :
+            # serial pedestal per line
+            serial_pedestal = spline_smooth_overscan(pixels[obb])
+            extension = self.__get_fits_extension__(segment_id)
+            # print(extension.header['EXTNAME'], ' serial mean :', serial_pedestal.mean())
+            serial_pedestal = serial_pedestal[:,np.newaxis]
+            oyp, oxp = self.parallel_overscan_bounding_box(segment_id)
+            p_overscan_bb = slice(oyp.start+2, oyp.stop), oxp
+            p_overscan = pixels[p_overscan_bb]-serial_pedestal[oyp.start+2:,:]
+            p_overscan = p_overscan.mean(axis= 0)
+            # print(extension.header['EXTNAME'], ' // mean :', p_overscan.mean())
+            p_overscan = p_overscan[np.newaxis, :] 
+
+            
+        datasec_y, datasec_x = self.datasec_bounding_box(segment_id)
+        im = pixels[datasec_y, datasec_x]-serial_pedestal[datasec_y,:] - p_overscan[:,datasec_x]
+        # print('image mean before bias subtraction',im.mean())
+        if bias is not None:
+            bias_data = bias.data
+            # a few sanity checks
+            assert bias_data.shape == pixels.shape, " Expect bias and current images  to have the same raw size %s "%self.filename
+            bias_datasec = convert_region(bias.header['DATASEC'])
+            assert bias_datasec == (datasec_y, datasec_x), " Datasec for bias and image %s are different"%self.filename
+            im -= bias_data[datasec_y, datasec_x]
+            # print('image mean after bias subtraction',im.mean())
+        if return_overscan :
+            return im, pixels[full_obb]-pedestal
+        return im
+
+
+
     # try with the parent class (i.e. ParisBench) one.
     """
     def subtract_overscan_and_trim(self, extension, return_overscan = False) :
@@ -404,14 +476,16 @@ class SlacBot(FileHandlerParisBench) :
         s = self.nonlin_corr[channel]
         t,c,k = s
         # the spline value is ridiculous when out of the training domain
-        #
+        # cook up something reasonnable when this happens
         below = (im <= t[0])
         above = (im >= t[-1])
-        val_below = interp.splev(t[0], s)
+        # val_below = interp.splev(t[0], s)
         val_above = interp.splev(t[-1], s)
+        # 
         # the spline encodes the *correction* only,
         correction = interp.splev(im, s)
-        correction[below] = val_below
+        #correction[below] = val_below
+        correction[below] = 0
         correction[above] = val_above
         return im+correction
 
@@ -520,16 +594,31 @@ class SlacBot(FileHandlerParisBench) :
                 # Borrowed from mondiode_value in eotest
                 t,I = np.loadtxt(filename).transpose() 
                 Ithresh = (min(I) + max(I))/5 + min(I)
-                I -= np.median(I[np.where(I < Ithresh)])
-                integral = sum((I[1:] + I[:-1])/2*(t[1:] - t[:-1]))
+                int_no_sub = sum((I[1:] + I[:-1])/2*(t[1:] - t[:-1]))
+                zero = np.median(I[np.where(I < Ithresh)])
+                I_sub= I-zero
+                int_sub = sum((I_sub[1:] + I_sub[:-1])/2*(t[1:] - t[:-1]))
+                # my cook-up 
+                # numerical derivative
+                der = I[1:]-I[:-1]
+                # search for peaks
+                i1 = np.argmax(der)
+                i2 = np.argmin(der)
+                sampling_period = np.median(t[1:] - t[:-1])
+                int_trunc = sum(I[max(i1-2,0): min(i2+2,len(I))])*sampling_period
+                # i1 and i2 are shifted by 1, and i2 is excluded from the following:
+                current = np.mean(I[i1+2:i2])                               
             except IOError :
                 print('Could not find %s, just hoping it is usesless'%filename)
-                integral = -1
+                int_sub = -1
         else : # exptime is zero
-            integral = 0
+            int_no_sub = 0
+            current = 0
+            int_trunc = 0
+            
         # the following line was used to compare the algorithms. Seem to be similar, on average.
         # return [integral, self.my_diode_integral(), exptime] , [ 'd', 'd0', 'expt']
-        return [integral, exptime] , [ 'd', 'expt']
+        return [int_no_sub, exptime, int_trunc, current*exptime] , [ 'd', 'expt','dt','c']
 
     def time_stamp(self):
         seqnum = self.im[0].header['SEQNUM']
