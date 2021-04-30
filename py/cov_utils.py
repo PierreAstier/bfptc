@@ -8,6 +8,12 @@ from .  import pol2d as pol2d
 # They do not seem that efficient, and we'll use a floating point mask
 # to compute its Fourier transform
 def find_mask(im, nsig, w=None) :
+    """
+    flags (in w) pixels of im which are more than nsig away from the average.
+    if w is provided as input, pixels flagged in w are ignored in the average,
+    and the outlier pixels are added to this input image.
+    returns w.
+    """
     if w is None : w = np.ones(im.shape)
     #  mu is used for sake of numerical precision in the sigma
     # computation, and is needed (at full precision) to identify outliers. 
@@ -33,6 +39,7 @@ def find_mask(im, nsig, w=None) :
 def fit_back(im, stepx, stepy=None) :
     """
     fits a polynomial sky to the image. Misses a mask argument
+    By default, the polynomial degre is 2. 
     """
     if stepy is None : stepy = stepx
     nx = im.shape[0]//stepx
