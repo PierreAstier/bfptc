@@ -191,6 +191,8 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
             z_range = min(z_values), max(z_values)
         else :
             _, zmin,zmax = sigmaclip(z_values, sig_clip,sig_clip)
+            zmin = max(zmin,min(z_values)) 
+            zmax = min(zmax,max(z_values)) 
             z_range=(zmin,zmax)
     print('z_range = ',z_range)
     def mapped_value(val) :
@@ -205,8 +207,8 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
     pc =  PatchCollection(patches, facecolors=facecolors)
     ax.add_collection(pc)
     # the limits are not set automatically
-    ax.set_xlim((-350,350))
-    ax.set_ylim((-350,350))
+    ax.set_xlim((-335,335))
+    ax.set_ylim((-335,335))
     # cosmetics
     pl.xlabel('y (mm)')
     pl.ylabel('x (mm)')
