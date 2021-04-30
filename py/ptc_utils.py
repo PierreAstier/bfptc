@@ -32,6 +32,7 @@ def mad(data, axis=0, scale=1.4826):
 
 import bfptc.ptcfit as ptcfit
 
+
 class load_params :
     """
     Prepare covariances for the PTC fit:
@@ -41,27 +42,23 @@ class load_params :
     - start: beyond which the modl is fitted
     - offset_degree: polynomila degree for the subtraction model
     """
-    def __init__(self):
-        self.r = 8
-        self.maxmu = 2e5
-        self.maxmu_el = 1e5
-        self.subtract_distant_value = True
-        self.start=12
-        self.offset_degree = 1
-        
+
 
 
 def load_data(tuple_name,params) :
     """
-    Returns a list of cov_fits, indexed by amp number.
+    Returns a list of cov_fits, indexed by amp number, not really fitted
     tuple_name can be an actual tuple (rec array), rather than a file name containing a tuple.
 
-    params drives what happens....  the class load_params provides default values
-    params.r : max lag considered
-    params.maxmu : maxmu in ADU's
+    params drives what happens:
 
-    params.subtract_distant_value: boolean that says if one wants to subtract a background to the measured covariances (mandatory for HSC flat pairs).
-    Then there are two more needed parameters: start, offset_degree
+    params.max_range_for_ptc_fit : max lag considered
+    params.maxmu_for_ptc_fit : maxmu in ADU's
+    params.maxmu_el_for_ptc_fit : maxmu in el
+    params.cov_subtract_distant_value: boolean that says if one wants to 
+    subtract a background to the measured covariances (mandatory for 
+    2014 HSC flat pairs).
+       Then there are two more needed parameters: min_distance, offset_degree
 
     """
     if (tuple_name.__class__ == str) :
@@ -75,23 +72,24 @@ def load_data(tuple_name,params) :
         ntext = nt[nt['ext'] == ext]
         if params.subtract_distant_value :
             c = ptcfit.cov_fit(ntext,r=None)
-            c.subtract_distant_offset(params.r, params.start, params.offset_degree)
+            c.subtract_distant_offset(params.max_range_for_ptc_fit, 
+                                      params.min_distance, params.offset_degree)
         else :
             c = ptcfit.cov_fit(ntext, params.r)
-        this_maxmu = params.maxmu            
+        this_maxmu = params.maxmu_for_ptc_fit            
         # tune the maxmu_el cut
         for iter in range(3) : 
             cc = c.copy()
             cc.set_maxmu(this_maxmu)
             cc.init_fit()# allows to get a crude gain.
             gain = cc.get_gain()
-            if (this_maxmu*gain < params.maxmu_el) :
-                this_maxmu = params.maxmu_el/gain
+            if (this_maxmu*gain < params.maxmu_el_for_ptc_fit) :
+                this_maxmu = params.maxmu_el_for_ptc_fit/gain
                 if this_maxmu<0 :
                     print(" the initialization went crazy hope the full fit, gets better")
                     break
                 continue
-            cc.set_maxmu_electrons(params.maxmu_el)
+            cc.set_maxmu_electrons(params.maxmu_el_for_ptc_fit)
             break
         cov_fit_list[ext] = cc
     return cov_fit_list
