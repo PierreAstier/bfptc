@@ -178,6 +178,7 @@ class ComputeCov :
             #
             channel = im1.channel_index(ext)
             assert channel==im2.channel_index(ext) , 'Different channel indices in a pair'
+            print(' means (full then clipped): ',sim1_full.mean(), sim2_full.mean(), sim1.mean(), sim2.mean())
             # check fs there are masks provided by the sensor itself (e.g. vignetting)
             ws = self.im1.sensor_mask(ext)
             if ws is not None : 
@@ -201,10 +202,10 @@ class ComputeCov :
             mu1 = masked_mean(sim1, w1)
             mu2 = masked_mean(sim2, w2)
             fact =  mu1/mu2 if (mu2 != 0 and rescale_before_subtraction)  else 1
-            print(("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, ext)))
+            print(("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, channel)))
 
             if abs(fact-1)>0.1 :
-                print(("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, ext)))
+                print(("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, channel)))
                 continue
             if (mu1 == 0 and mu2 == 0) :
                 print('skipping those because their averages are both exactly 0, which is suspicious')
