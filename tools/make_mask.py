@@ -20,6 +20,22 @@ import argparse
 
 from bfptc.cov_utils import find_mask, fit_back
 
+
+def simple_mask(im, nsig):
+    w = np.ones_like(im)
+    count = w.sum()
+    mu = np.median(im)
+    sigma = np.sqrt(np.median((im-mu)**2))
+    for k in range(3) :
+        outliers = np.where(np.abs((im-mu)*w)>nsig*sigma)
+        w[outliers] = 0
+        print('len(outliers)',len(outliers), (1-w).sum())
+        if (outliers[0].sum()==0) : break
+        sigma = np.sqrt(np.median((im[w!=0]-mu)**2))
+        mu = np.median((im[w!=0]))
+    return w
+
+
 if __name__ == "__main__" :   
     params = envparams.EnvParams()
 
@@ -59,9 +75,11 @@ if __name__ == "__main__" :
         ids = im.segment_ids()
         for id in ids :
             pixels = im.prepare_segment(id)
-            w = find_mask(pixels - fit_back(pixels, 50), params.nsig_image)
+            # w = find_mask(pixels - fit_back(pixels, 50), params.nsig_image)
+            w = simple_mask(pixels , params.nsig_image)
             # here w=1 means OK, and 0 means bad
             # in dead.fits, it is reversed
+            print("channel, dead count",im.channel_index(id), (1-w).sum())
             w = (1 - w).astype(np.int32)
             if id in list(data.keys()) :
                 data[id] += w
