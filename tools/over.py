@@ -16,16 +16,18 @@ from bfptc.filehandlers import *
 def process_file(fh) :
     """
     the argument should be a filehandler
-    return a dictionnary (indexed by segment id) of 3 arrays: last pixel, overscan 0  and overscan 1
+    return a dictionnary (indexed by segment id) of 3 arrays + 2 scalars: 
+         last image pixel, overscan 0, overscan 1, <data>, <overp>
     """
-    if (False) :
-        print('#name:\n#sim:\n#s1:\n#s2:\n#pim:\n#p1:\n#p2:\n#ped:\n#slow:\n#shigh:\n#og:\n#time:\n#end')
     extensions = fh.segment_ids()
     res = {}
     for ext in extensions :
-        data,over = fh.subtract_overscan_and_trim(ext, None, return_overscan = True)
-        assert data.shape[0] == over.shape[0]
-        res[ext] = (data[: , -1], over[:,0], over[:,1],data.mean())
+        data,overs, overp = fh.subtract_overscan_and_trim(ext, None, return_overscan = True)
+        assert data.shape[0] == overs.shape[0]
+        # ad hoc cut to remove data where the overscan seems messy (because it should be essentially flat)
+        if overs[1:,0].std() >  20 : 
+            continue
+        res[fh.channel_index(ext)] = (data[: , -1], overs[:,0], overs[:,1],data.mean(), np.median(overp))
     return res
 
 import bfptc.envparams as envparams
@@ -85,10 +87,10 @@ if __name__ == "__main__" :
             time = im.time_stamp()
             data = process_file(im)
             for amp,pixels in data.items() :
-                im,o1,o2,mu  = pixels
+                im,o1,o2,mu,overp  = pixels
                 for k in range(len(im)):
-                    rows.append((amp,im[k], o1[k], o2[k], k, mu, time))
-    tags = ['amp','im','o1','o2','j','mu','t']
+                    rows.append((amp,im[k], o1[k], o2[k], k, mu, overp, time))
+    tags = ['amp','im','o1','o2','j','mu','overp','t']
     format = []
     for k,x in enumerate(rows[0]) :
         if x.__class__ in [int, np.int64] : 
