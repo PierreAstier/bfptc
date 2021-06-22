@@ -129,7 +129,7 @@ def compute_cov_direct(diff, w, parameters) :
             else:
                 cov,npix = cov_direct_value(diff, w, dx, dy)
             if (dx==0 and dy == 0) : var = cov
-            l.append("%d %d %f %f %d"%(dx,dy,var,cov,npix))
+            l.append((dx,dy,var,cov,npix))
     return l
 
 
@@ -217,9 +217,11 @@ class ComputeCov :
             wdiff = find_mask(diff, self.params.nsig_diff, w12)
             w = w12*wdiff
             sh = diff.shape
-            self.params.fft_shape = (fft_size(sh[0]+self.params.maxrange), fft_size(sh[1]+self.params.maxrange))
-            covs = compute_cov_fft(diff, w, self.params)
-            #covs = compute_corr_direct(diff, w, params)
+            if self.params.maxrange > 3 : # Not sure about the exact value that optimizes the whole thing
+                self.params.fft_shape = (fft_size(sh[0]+self.params.maxrange), fft_size(sh[1]+self.params.maxrange))
+                covs = compute_cov_fft(diff, w, self.params)
+            else :
+                covs = compute_cov_direct(diff, w, params)
             # checked that the output tuples are identical
             # covs is a list of ascii lines, each containing i j var cov npix
             tuple_rows += [(mu1, mu2) + cov + (channel, ped1, sig_ped1, ped2, sig_ped2)+ other_values for cov in covs]
