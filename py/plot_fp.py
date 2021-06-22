@@ -91,8 +91,8 @@ def amp_to_chip_pix(chip_name, amp_id):
     a22_itl = [-1,1]
     dy_itl=[4000,0]
     dy_e2v=[4004,0]
-    
-    if ccd_vendor_dict[chip_name[:3]] == 'CORNER' :
+    type_of_raft = raft_type(chip_name[:3])
+    if type_of_raft == 'CORNER' :
         ccd_name = chip_name[4:]
         if ccd_name == 'SG0' or ccd_name == 'SG1':
             return AffineTransfo(-1,0,0,a22_itl[j], 512*(i+1), dy_itl[j])
@@ -100,21 +100,9 @@ def amp_to_chip_pix(chip_name, amp_id):
             return AffineTransfo(-1,0,0,1, 508*(i+1), 0)
         raise ValueError(' bad corner raft chip name %s'%ccd_name)
     # done with corner rafts    
-    try :
-        i = amp_id%10
-        j = amp_id//10
-    except TypeError : # hope it is a string...
-        i = int(amp_id[1])
-        j = int(amp_id[0])
-    assert((i<8) & (j<2)) 
-    a22_e2v = [-1,1]
-    a11_e2v = [1,-1]
-    a22_itl = [-1,1]
-    dy_itl=[4000,0]
-    dy_e2v=[4004,0]
-    if ccd_vendor_dict[chip_name[:3]] == 'ITL' :
+    if type_of_raft == 'ITL' :
         return AffineTransfo(-1,0,0,a22_itl[j], 508*(i+1), dy_itl[j])
-    elif  ccd_vendor_dict[chip_name[:3]] == 'E2V' :
+    elif  type_of_raft == 'E2V' :
         if j==0:
             return AffineTransfo(a11_e2v[j],0,0,a22_e2v[j], 512*i, dy_e2v[j])
         if j==1 :
@@ -128,7 +116,7 @@ def amp_extend(chip_id, amp_id):
     return the extend in pixels of aan amp. 
     chip_id should contain the raft name.
     """
-    if ccd_vendor_dict[chip_id[:3]] == 'ITL' :
+    if ccd_vendor(chip_id[:3]) == 'ITL' :
         return 508,2000
     else :
         return 512, 2002
@@ -220,7 +208,6 @@ def plot_fp(ax, values, z_range=None, cm=pl.cm.hot, sig_clip = None, get_data=No
     colorbar=pl.colorbar(sm)
 
 def plot_hist(values, z_range=None, sig_clip = None, get_data=None) :
-    
     if get_data is None : 
         to_plot = [x for x in y.values() for y in values.values()]
     else : # The input contains more than what is to be plotted
@@ -237,31 +224,58 @@ def plot_hist(values, z_range=None, sig_clip = None, get_data=None) :
 
 
     
-ccd_vendor_dict={'R00': 'CORNER',
-                 'R01':'ITL',
-   'R02':'ITL',
-   'R03':'ITL',
-    'R04': 'CORNER',
-   'R10':'ITL',
-   'R20':'ITL',
-   'R11':'E2V',
-   'R12':'E2V',
-   'R13':'E2V',
-   'R14':'E2V',
-   'R21':'E2V',
-   'R22':'E2V',
-   'R23':'E2V',
-   'R24':'E2V',
-   'R30':'E2V',
-   'R31':'E2V',
-   'R32':'E2V',
-   'R33':'E2V',
-   'R34':'E2V',
-    'R40':'CORNER',
-   'R41':'ITL',
-   'R42':'ITL',
-                 'R43':'ITL', 'R44':'CORNER'}
+def raft_type(raft_name):
+    my_dict ={'R00': 'CORNER',
+              'R01':'ITL',
+              'R02':'ITL',
+              'R03':'ITL',
+              'R04': 'CORNER',
+              'R10':'ITL',
+              'R11':'E2V',
+              'R12':'E2V',
+              'R13':'E2V',
+              'R14':'E2V',
+              'R20':'ITL',
+              'R21':'E2V',
+              'R22':'E2V',
+              'R23':'E2V',
+              'R24':'E2V',
+              'R30':'E2V',
+              'R31':'E2V',
+              'R32':'E2V',
+              'R33':'E2V',
+              'R34':'E2V',
+              'R40':'CORNER',
+              'R41':'ITL',
+              'R42':'ITL',
+              'R43':'ITL',
+              'R44':'CORNER'}
+    # no need to test: if the raft name is wrong the next statement will raise
+    return my_dict[raft_name]
         
+
+def ccd_vendor(raft_name) :
+    kind = raft_type(raft_name)
+    if kind == "CORNER" or kind == "ITL":
+        return "ITL"
+    return kind
+
+
+def just_a_list(my_data_dict, get_data = None) :
+    """
+    transforms a dict of dicts into a list
+    returns the list of get_data(my_data_dict[chip][channel])
+    """
+    def id(stuff):
+        return stuff
+    if get_data is None:
+        get_data = id
+    res = []
+    for chip_id, det_val in my_data_dict.items():
+        for amp_id,val in det_val.items() :
+            res.append(get_data(val))
+    return res
+
 
 class AffineTransfo :
     """
