@@ -196,12 +196,14 @@ class FileHandlerParisBench(FileHandler):
         """
         segment_id comes from segment_ids
         return two slices (y, x)
+        Along x, the overscan starts where datasec stops
+        Along y, it covers the full size (used to follow datasec)
         """
         extension = self.__get_fits_extension__(segment_id)
         datas_y,datas_x  = convert_region(extension.header['DATASEC'])
         whole_extension_shape = extension.data.shape
         # Along x, the overscan starts where datasec stops
-        # Along y, the overscan follow datasec
+        # Along y, it covers the full size (used to follow datasec)
         bb = datas_y, slice(datas_x.stop, whole_extension_shape[0])
         return bb
 
@@ -245,7 +247,7 @@ class FileHandlerParisBench(FileHandler):
             assert bias_datasec == (datasec_y, datasec_x), " Datasec for bias and image %s are different"%self.filename
             im -= bias_data[datasec_y, datasec_x]
         if return_overscan :
-            return im, pixels[full_obb]-pedestal
+            return im, pixels[full_obb]-pedestal, None
         return im
         
     def correct_nonlin(self, im, channel, chip) :
@@ -401,7 +403,12 @@ class SlacBot(FileHandlerParisBench) :
 
 
     def subtract_overscan_and_trim(self, segment_id, bias, return_overscan = False) :
-        # probably, the behvior should be controlled by the parameters.
+        """
+        returns the overscan-sutracted data, possibily with master bias subtraction.
+        Currently, this routine implements a 2D overscan subtraction.
+        also returns serial and parallel overscans if requested 
+        """
+        # probably, the behavior should be controlled by the parameters.
         pixels = self.amp_data(segment_id)
         # figure out the overscan bounding box
         oy,ox = self.overscan_bounding_box(segment_id)
@@ -419,9 +426,9 @@ class SlacBot(FileHandlerParisBench) :
             serial_pedestal = serial_pedestal[:,np.newaxis]
             oyp, oxp = self.parallel_overscan_bounding_box(segment_id)
             p_overscan_bb = slice(oyp.start+2, oyp.stop), oxp
-            p_overscan = pixels[p_overscan_bb]-serial_pedestal[oyp.start+2:,:]
+            p_overscan = pixels[p_overscan_bb]-serial_pedestal[p_overscan_bb[0],:]
+            p_overscan_values = p_overscan # if returned to the caller
             p_overscan = p_overscan.mean(axis= 0)
-            # print(extension.header['EXTNAME'], ' // mean :', p_overscan.mean())
             p_overscan = p_overscan[np.newaxis, :] 
 
             
@@ -437,7 +444,7 @@ class SlacBot(FileHandlerParisBench) :
             im -= bias_data[datasec_y, datasec_x]
             # print('image mean after bias subtraction',im.mean())
         if return_overscan :
-            return im, pixels[full_obb]-pedestal
+            return im, (pixels[full_obb] - serial_pedestal)[datasec_y,:], p_overscan_values[:,datasec_x]
         return im
 
 
@@ -683,7 +690,7 @@ class FileHandlerESABench(FileHandlerParisBench):
         trimmed = data[:,self.image_start_x: self.overscan_start_x]
         if return_overscan :
             over = data[:, self.overscan_start_x:]
-            return trimmed,over
+            return trimmed,over, None
         return trimmed
                     
     def ped_stat(self, amp_id):
@@ -827,7 +834,7 @@ class FileHandlerHSC(FileHandlerESABench):
         data = data - ped
         if return_overscan :
             over = overscan_data -ped
-            return data,over
+            return data,over, None
         return data
                     
     def ped_stat(self, amp_id):
