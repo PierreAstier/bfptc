@@ -152,70 +152,82 @@ class ComputeCov :
         self.im1 = im1
         self.im2 = im2
         self.params = params
-    
+        self.rescale_before_subtraction = im1.rescale_before_subtraction()
+        self.v1, self.t1 = self.im1.other_sensors()
+        self.v2, self.t2 = self.im2.other_sensors()
+        if self.v1 != '' :
+            self.other_values = tuple(np.atleast_1d(self.v1))+tuple(np.atleast_1d(self.v2))
+            self.other_tags = [t+'1' for t in np.atleast_1d(self.t1)]+[t+'2' for t in np.atleast_1d(self.t2)]
+        else :
+            self.other_values = ()
+            self.other_tags = []
+        self.extensions = self.im1.segment_ids()
+
+    def diff_image(self, ext) :
+        """
+        evaluates the difference image for extension ext
+        (listed in self.extensions)
+        returns mu1,mu2, w, diff
+        (mu1 and mu2 are averages, w is the weight (0. and 1.), diff is the images. 
+        mu1 = None means that somthing went wrond
+        """
+        sim1_full = self.im1.prepare_segment(ext)
+        sim1 = self.im1.clip_frame(sim1_full)
+        sim2_full = self.im2.prepare_segment(ext)
+        sim2 = self.im2.clip_frame(sim2_full)
+        #
+        channel = im1.channel_index(ext)
+        assert channel==im2.channel_index(ext) , 'Different channel indices in a pair'
+        print(' means (full then clipped): ',sim1_full.mean(), sim2_full.mean(), sim1.mean(), sim2.mean())
+        # check fs there are masks provided by the sensor itself (e.g. vignetting)
+        ws = self.im1.sensor_mask(ext)
+        if ws is not None : 
+            ws = self.im1.clip_frame(ws)
+            w1 = (1-ws)
+            w2 = (1-ws)
+            if w1.sum() ==0 : # no need to go further
+                return None,0,w1, sim1-sim2
+        else :
+            w1 = None
+            w2 = None
+
+        if self.params.subtract_sky_before_clipping :
+            w1 = find_mask(sim1 - fit_back(sim1,50), self.params.nsig_image, w1)
+            w2 = find_mask(sim2 - fit_back(sim2,50), self.params.nsig_image, w2)
+        else:
+            w1 = find_mask(sim1, self.params.nsig_image, w1)
+            w2 = find_mask(sim2, self.params.nsig_image, w2)
+
+        if w1.sum() ==0 or w2.sum() == 0 :
+            return None,0,0,0
+        mu1 = masked_mean(sim1, w1)
+        mu2 = masked_mean(sim2, w2)
+        fact =  mu1/mu2 if (mu2 != 0 and self.rescale_before_subtraction)  else 1
+        print(("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, channel)))
+
+        if abs(fact-1)>0.1 :
+            print(("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, channel)))
+            return None,0,0,0
+
+        # Compensate the flux difference, so that if the images are 
+        # proportional to each other, any spatial structure vanishes.
+        diff = (sim1*mu2-sim2*mu1)/(0.5*(mu1+mu2))
+        w12 = w1*w2
+        w = find_mask(diff, self.params.nsig_diff, w12)
+        return mu1,mu2,w,diff
+        
+        
     def compute_cov(self):
         if (im1.check_images(im2) == False) :
             return [], []
         tuple_rows = []
-        rescale_before_subtraction = im1.rescale_before_subtraction()
-        v1,t1 = self.im1.other_sensors()
-        v2,t2 = self.im2.other_sensors()
-        if v1 != '' :
-            other_values = tuple(np.atleast_1d(v1))+tuple(np.atleast_1d(v2))
-            other_tags = [t+'1' for t in np.atleast_1d(t1)]+[t+'2' for t in np.atleast_1d(t2)]
-        else :
-            other_values = ()
-            other_tags = []
-        extensions = self.im1.segment_ids()
-        
-        for ext in extensions :
-            sim1_full = self.im1.prepare_segment(ext)
-            sim1 = self.im1.clip_frame(sim1_full)
+        for ext in self.extensions :
+            mu1,mu2,w,diff = self.diff_image(ext)
+            if mu1 is None : # something went wrong
+                continue
             ped1, sig_ped1 = self.im1.ped_stat(ext)
-            sim2_full = self.im2.prepare_segment(ext)
-            sim2 = self.im2.clip_frame(sim2_full)
             ped2, sig_ped2 = self.im2.ped_stat(ext)
-            #
             channel = im1.channel_index(ext)
-            assert channel==im2.channel_index(ext) , 'Different channel indices in a pair'
-            print(' means (full then clipped): ',sim1_full.mean(), sim2_full.mean(), sim1.mean(), sim2.mean())
-            # check fs there are masks provided by the sensor itself (e.g. vignetting)
-            ws = self.im1.sensor_mask(ext)
-            if ws is not None : 
-                ws = self.im1.clip_frame(ws)
-                w1 = (1-ws)
-                w2 = (1-ws)
-                if w1.sum() ==0 : continue
-            else :
-                w1 = None
-                w2 = None
-            if self.params.subtract_sky_before_clipping :
-                w1 = find_mask(sim1 - fit_back(sim1,50), self.params.nsig_image, w1)
-                w2 = find_mask(sim2 - fit_back(sim2,50), self.params.nsig_image, w2)
-            else:
-                w1 = find_mask(sim1, self.params.nsig_image, w1)
-                w2 = find_mask(sim2, self.params.nsig_image, w2)
-
-            if w1.sum() ==0 or w2.sum() == 0 : continue
-
-            #      print("masked fractions %f %f"%(float(m1.mask.sum())/sim1.size, float(m2.mask.sum())/sim2.size))
-            mu1 = masked_mean(sim1, w1)
-            mu2 = masked_mean(sim2, w2)
-            fact =  mu1/mu2 if (mu2 != 0 and rescale_before_subtraction)  else 1
-            print(("file1,file2 = %s %s mu1,mu2 = %f %f fact=%f ext=%d"%(self.im1.filename, self.im2.filename, mu1, mu2, fact, channel)))
-
-            if abs(fact-1)>0.1 :
-                print(("%s and %s have too different averages in ext %d ! .... ignoring them"%(self.im1.filename, self.im2.filename, channel)))
-                continue
-            if (mu1 == 0 and mu2 == 0) :
-                print('skipping those because their averages are both exactly 0, which is suspicious')
-                continue
-            # Compensate the flux difference, so that if the images are 
-            # proportional to each other, any spatial structure vanishes.
-            diff = (sim1*mu2-sim2*mu1)/(0.5*(mu1+mu2))
-            w12 = w1*w2
-            wdiff = find_mask(diff, self.params.nsig_diff, w12)
-            w = w12*wdiff
             sh = diff.shape
             if self.params.maxrange > 3 : # Not sure about the exact value that optimizes the whole thing
                 self.params.fft_shape = (fft_size(sh[0]+self.params.maxrange), fft_size(sh[1]+self.params.maxrange))
@@ -224,8 +236,8 @@ class ComputeCov :
                 covs = compute_cov_direct(diff, w, params)
             # checked that the output tuples are identical
             # covs is a list of ascii lines, each containing i j var cov npix
-            tuple_rows += [(mu1, mu2) + cov + (channel, ped1, sig_ped1, ped2, sig_ped2)+ other_values for cov in covs]
-        tags = ['mu1','mu2','i','j','var','cov','npix','ext','s1','sp1','s2','sp2']+other_tags
+            tuple_rows += [(mu1, mu2) + cov + (channel, ped1, sig_ped1, ped2, sig_ped2)+ self.other_values for cov in covs]
+        tags = ['mu1','mu2','i','j','var','cov','npix','ext','s1','sp1','s2','sp2']+ self.other_tags
         return tuple_rows, tags
 
     
