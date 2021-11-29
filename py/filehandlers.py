@@ -657,9 +657,9 @@ class FileHandlerESABench(FileHandlerParisBench):
         nx = self.whole_image.shape[1]
         assert (amp_id == 0 or amp_id ==1), "This codes assumes two amps in a single HDU"
         if amp_id == 0:
-            data = self.whole_image[:,:nx/2]
+            data = self.whole_image[:,:nx//2]
         else :
-            data = self.whole_image[:,nx-1:nx/2-1:-1]
+            data = self.whole_image[:,nx-1:nx//2-1:-1]
         return data
 
     # boundaries determined using DS9
@@ -695,7 +695,7 @@ class FileHandlerESABench(FileHandlerParisBench):
                     
     def ped_stat(self, amp_id):
         amp_data = self.amp_data(amp_id)[:,11:]
-        overscan_region = amp_data[:, self.overscan_start_x+self.params.oversan_skip:]
+        overscan_region = amp_data[:, self.overscan_start_x+self.params.overscan_skip:]
         # rms over y of the median along x
         sig = np.std(np.median(overscan_region,1))
         ped = np.median(overscan_region) # could be mean
