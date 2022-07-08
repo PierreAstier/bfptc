@@ -66,6 +66,7 @@ if __name__ == "__main__" :
     #print(options.bias_files)
 
     params.subtract_bias = True 
+    params.use_dead = False
     print('control parameters\n:',params)
         
     data = {}
