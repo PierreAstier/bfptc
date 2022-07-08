@@ -62,7 +62,7 @@ if __name__ == "__main__" :
     # should provide a way to alter that from the command line
     help_fh_tags = '\n'.join(['         %s : %s'%(key,value) for key,value in file_handlers.items()])
     
-    usage=" to compute covariances of differences of pairs of flats"
+    usage=" to compute a robust average of a set of biases"
     parser = argparse.ArgumentParser(usage=usage)
     parser.add_argument("bias_files", help= " input files ", nargs='+')
     
@@ -98,6 +98,7 @@ if __name__ == "__main__" :
     #print(options.bias_files)
 
     params.subtract_bias = False # we obviously do not have it yet !
+    params.use_dead = False # we probably still do not have any
     print('control parameters\n:',params)
         
     data = {}

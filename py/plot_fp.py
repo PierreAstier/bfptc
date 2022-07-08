@@ -15,12 +15,13 @@ def raft_to_fp(raft_name) :
     j = int(raft_name[1])
     i = int(raft_name[2])
     # raft size in mm ?
-    raft_size = 130
+    raft_step = 130
     # there are 5 rafts in both directions. place the center at (0,0)
-    transfo = AffineTransfo(1.,0.,0.,1.,float(i-2.5)*raft_size, float(j-2.5)*raft_size)
+    transfo = AffineTransfo(1.,0.,0.,1.,float(i-2.5)*raft_step, float(j-2.5)*raft_step)
     if not is_corner_raft(raft_name): return transfo
     # corner rafts are rotated
-    # shift to raft center
+    # shift to raft center (interchip is 2.5 so inter-raft is 5.
+    raft_size = raft_step-5.
     shift = AffineTransfo(1,0,0,1, -raft_size*0.5, -raft_size*0.5 )
     if raft_name == 'R00' :
         t = AffineTransfo.Rot180().compose(shift)
@@ -275,6 +276,30 @@ def just_a_list(my_data_dict, get_data = None) :
         for amp_id,val in det_val.items() :
             res.append(get_data(val))
     return res
+
+def just_a_double_list(my_data_dict1, my_data_dict2, get_data1 = None, get_data2=None) :
+    """
+    transforms two dicts of dicts into list of equal size
+    returns the lists  get_data{1,2}(my_data_dict{1,2}[chip][channel])
+    only from common keys.
+    """
+    def id(stuff):
+        return stuff
+    if get_data1 is None:
+        get_data1 = id
+    if get_data2 is None:
+        get_data2 = id            
+    res1 = []
+    res2 = []
+    for chip_id, det_val in my_data_dict1.items():
+        try :
+            for amp_id,val in det_val.items() :
+                val2 = get_data2(my_data_dict2[chip_id][amp_id])
+                res1.append(get_data1(val))
+                res2.append(val2)
+        except KeyError:
+            pass
+    return res1,res2
 
 
 class AffineTransfo :
