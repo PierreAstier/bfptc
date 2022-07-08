@@ -170,7 +170,9 @@ class FileHandlerParisBench(FileHandler):
         if params is not None and hasattr(params,'subtract_bias') and params.subtract_bias and FileHandlerParisBench.masterbias is None :
             FileHandlerParisBench.masterbias = pf.open('masterbias.fits')
             print('loaded masterbias.fits for bias subtraction')
-        if FileHandlerParisBench.dead is None and params is not None and hasattr(params,'use_dead') and params.use_dead and os.path.isfile('dead.fits'):
+        # if dead is missing, we have to accept it because in the pipeline, requiring it here results in a dead lock.
+        # dead is (mildly) required for nonlin_tuple, which is needed for dead. Could change the pipeline though
+        if FileHandlerParisBench.dead is None and params is not None and hasattr(params,'use_dead') and params.use_dead and os.path.isfile("dead.fits"):
             FileHandlerParisBench.dead = pf.open('dead.fits')
             print('INFO: loaded mask : dead.fits')
         
@@ -395,9 +397,10 @@ class SlacBot(FileHandlerParisBench) :
         extension = self.__get_fits_extension__(segment_id)
         datas_y,datas_x  = convert_region(extension.header['DATASEC'])
         whole_extension_shape = extension.data.shape
-        # Along x, the overscan starts where datasec stops
-        # Along y, the overscan follow datasec
-        bb = slice(datas_y.stop,whole_extension_shape[0]), slice(datas_x.start, whole_extension_shape[1])
+        # Along x, the way the following routine 
+        # is written imposes to start at 0
+        # Along y, the // overscan follow datasec
+        bb = slice(datas_y.stop,whole_extension_shape[0]), slice(0, whole_extension_shape[1])
         return bb
 
 
@@ -425,14 +428,16 @@ class SlacBot(FileHandlerParisBench) :
             # print(extension.header['EXTNAME'], ' serial mean :', serial_pedestal.mean())
             serial_pedestal = serial_pedestal[:,np.newaxis]
             oyp, oxp = self.parallel_overscan_bounding_box(segment_id)
-            p_overscan_bb = slice(oyp.start+2, oyp.stop), oxp
-            p_overscan = pixels[p_overscan_bb]-serial_pedestal[p_overscan_bb[0],:]
+            p_overscan_bb = oyp,oxp
+            p_overscan = pixels[p_overscan_bb]-serial_pedestal[oyp,:]
             p_overscan_values = p_overscan # if returned to the caller
-            p_overscan = p_overscan.mean(axis= 0)
+            # ignore the first // overscan lines
+            p_overscan = p_overscan[2:,:].mean(axis= 0)
             p_overscan = p_overscan[np.newaxis, :] 
 
             
         datasec_y, datasec_x = self.datasec_bounding_box(segment_id)
+        # the second correction assumes that oxp.start == 0
         im = pixels[datasec_y, datasec_x]-serial_pedestal[datasec_y,:] - p_overscan[:,datasec_x]
         # print('image mean before bias subtraction',im.mean())
         if bias is not None:
@@ -480,7 +485,10 @@ class SlacBot(FileHandlerParisBench) :
         # the sckpy splines consists of 3 elements: knots, coeffs, degree
         # s = self.nonlin_corr[chip][channel]
         # use one file per chip
-        s = self.nonlin_corr[channel]
+        try : 
+            s = self.nonlin_corr[channel]
+        except KeyError : # nonlin correction not available for this channel
+            return im
         t,c,k = s
         # the spline value is ridiculous when out of the training domain
         # cook up something reasonnable when this happens
@@ -614,7 +622,8 @@ class SlacBot(FileHandlerParisBench) :
                 sampling_period = np.median(t[1:] - t[:-1])
                 int_trunc = sum(I[max(i1-2,0): min(i2+2,len(I))])*sampling_period
                 # i1 and i2 are shifted by 1, and i2 is excluded from the following:
-                current = np.mean(I[i1+2:i2])                               
+                # assume that the rise is 2 samples, as well as the fall.
+                current = np.mean(I[i1+3:i2-2])                               
             except IOError :
                 print('Could not find %s, just hoping it is usesless'%filename)
                 int_sub = -1
