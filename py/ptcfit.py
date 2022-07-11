@@ -1,6 +1,6 @@
 from __future__ import print_function
 import numpy as np
-from . import pol2d as pol2d
+from bfptc import pol2d as pol2d
 
 """
 This code implements the model (and the fit thereof) described in
@@ -109,6 +109,113 @@ def symmetrize(a):
     return asym
 
 
+# a few utilities to transform a covariance tuple into a ptcfit
+class load_params :
+    """
+    Prepare covariances for the PTC fit:
+    - eliminate data beyond saturation
+    - eliminate data beyond r (ignored in the fit
+    - optionnaly (subtract_distant_value) subtract the extrapolation from distant covariances to closer ones, separately for each pair.
+    - start: beyond which the modl is fitted
+    - offset_degree: polynomila degree for the subtraction model
+    """
+    def __init__(self):
+        self.r = 8
+        self.maxmu = 2e5
+        self.maxmu_el = 1e5
+        self.subtract_distant_value = True
+        self.start=12
+        self.offset_degree = 1
+        
+
+
+def load_data(tuple_name,params) :
+    """
+    Returns a list of cov_fits, indexed by amp number.
+    tuple_name can be an actual tuple (rec array), rather than a file name containing a tuple.
+
+    params drives what happens....  the class load_params provides default values
+    params.r : max lag considered
+    params.maxmu : maxmu in ADU's
+
+    params.subtract_distant_value: boolean that says if one wants to subtract a background to the measured covariances (mandatory for HSC flat pairs).
+    Then there are two more needed parameters: start, offset_degree
+
+    """
+    if (tuple_name.__class__ == str) :
+        nt = np.load(tuple_name) 
+    else :
+        nt = tuple_name
+    exts = np.array(np.unique(nt['ext']), dtype = int)
+    cov_fit_list = {}
+    for ext in exts :
+        print('extension=', ext)
+        ntext = nt[nt['ext'] == ext]
+        if params.subtract_distant_value :
+            c = ptcfit.cov_fit(ntext,r=None)
+            c.subtract_distant_offset(params.r, params.start, params.offset_degree)
+        else :
+            c = ptcfit.cov_fit(ntext, params.r)
+        this_maxmu = params.maxmu            
+        # tune the maxmu_el cut
+        for iter in range(3) : 
+            cc = c.copy()
+            cc.set_maxmu(this_maxmu)
+            cc.init_fit()# allows to get a crude gain.
+            gain = cc.get_gain()
+            if (this_maxmu*gain < params.maxmu_el) :
+                this_maxmu = params.maxmu_el/gain
+                if this_maxmu<0 :
+                    print(" the initialization went crazy hope the full fit, gets better")
+                    break
+                continue
+            cc.set_maxmu_electrons(params.maxmu_el)
+            break
+        cov_fit_list[ext] = cc
+    return cov_fit_list
+
+
+
+def fit_data(tuple_name, maxmu = 1.4e5, maxmu_el = 1e5, r=8) :
+    """
+    The first argument can be a tuple, instead of the name of a tuple file.
+    returns 2 dictionnaries, one of full fits, and one with b=0
+
+    The behavior of this routine should be controlled by other means.
+    """
+    lparams = load_params()
+    lparams.subtract_distant_value = False
+    lparams.maxmu = maxmu
+    lparams.maxmu = maxmu_el = maxmu_el
+    lparams.r = r
+    cov_fit_list = load_data(tuple_name, lparams)
+    # exts = [i for i in range(len(cov_fit_list)) if cov_fit_list[i] is not None]
+    alist = []
+    blist = []
+    cov_fit_nob_list = {} # [None]*(exts[-1]+1)
+    for ext,c in cov_fit_list.iteritems() :
+        print('fitting channel %d'%ext)
+        c.fit()
+        cov_fit_nob_list[ext] = c.copy()
+        c.params['c'].release()
+        c.fit()
+        a = c.get_a()
+        alist.append(a)
+        print(a[0:3, 0:3])
+        b = c.get_b()
+        blist.append(b)
+        print(b[0:3, 0:3])
+    a = np.asarray(alist)
+    b = np.asarray(blist)
+    for i in range(2):
+        for j in range(2) :
+            print(i,j,'a = %g +/- %g'%(a[:,i,j].mean(), a[:,i,j].std()),
+                  'b = %g +/- %g'%(b[:,i,j].mean(), b[:,i,j].std()))
+    return cov_fit_list, cov_fit_nob_list
+
+
+
+# The actual PTC/covariance curves fit 
 from bfptc.fitparameters import FitParameters
 import copy
 
