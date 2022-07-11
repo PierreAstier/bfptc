@@ -20,6 +20,15 @@ class Histogram:
         chans = chans[~over]
         self.h += np.bincount(chans, minlength=self.nchan)
 
+    def fillw(self,vals,w):
+        chans = np.array(np.floor((vals-self.min)/self.step), dtype=int)
+        neg = chans<0
+        self.under += w[neg].sum()
+        over = chans>= self.nchan
+        self.over += w[over].sum()
+        in_hist = (~neg)&(~over)
+        self.h += np.bincount(chans[in_hist], w[in_hist],minlength=self.nchan)
+
     def bin_centers(self):
         return np.linspace(self.min, self.max-self.step, self.nchan)+self.step*0.5
 
@@ -77,8 +86,8 @@ class Histogram:
         return self.bin_centers()[minbin:maxbin], self.h[minbin:maxbin]
 
     def sub_range_hist(self, minval, maxval):
-        minbin = int(np.floor((minval-self.min)/self.step))
-        maxbin = int(np.ceil((maxval-self.min)/self.step))
+        minbin = max(int(np.floor((minval-self.min)/self.step)),0)
+        maxbin = min(int(np.ceil((maxval-self.min)/self.step)),self.nchan-1)
         bc = self.bin_centers()
         new_xmin = bc[minbin]-0.5*self.step
         new_xmax = bc[maxbin]-0.5*self.step

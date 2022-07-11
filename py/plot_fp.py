@@ -226,6 +226,9 @@ def plot_hist(values, z_range=None, sig_clip = None, get_data=None) :
 
     
 def raft_type(raft_name):
+    """
+    Given a raft name, returns 'E2V', 'ITL' or 'CORNER'
+    """
     my_dict ={'R00': 'CORNER',
               'R01':'ITL',
               'R02':'ITL',
