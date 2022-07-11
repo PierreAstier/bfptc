@@ -339,6 +339,10 @@ class cov_fit :
                         print ('having hard time to fit, trying to insist')
                     else:
                         raise RuntimeError(msg)
+                except TypeError as e : #happens when there is less data than parameters
+                    # re throw it as a RunTimeError that 
+                    # should be caught in the calling routine:
+                    raise RuntimeError(str(e))
             wres = self.weighted_res(coeffs)
             # do not count the outliers as significant : 
             sig = mad(wres[wres != 0]) 
@@ -350,6 +354,8 @@ class cov_fit :
         if ierr not in [1,2,3,4] :
             print("minimisation failed ", mesg)
             raise RuntimeError(mesg)
+        if cov_params is None:
+            print(' the fit did not deliver the covariance matrix')
         self.cov_params = cov_params
         return coeffs
     
