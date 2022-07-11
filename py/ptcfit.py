@@ -120,11 +120,11 @@ class load_params :
     - offset_degree: polynomila degree for the subtraction model
     """
     def __init__(self):
-        self.r = 8
-        self.maxmu = 2e5
-        self.maxmu_el = 1e5
+        self.max_range_for_ptc_fit = 8
+        self.maxmu_for_ptc_fit = 2e5
+        self.maxmu_el_for_ptc_fit  = 1e5
         self.subtract_distant_value = True
-        self.start=12
+        self.min_distance = 12
         self.offset_degree = 1
         
 
@@ -148,28 +148,31 @@ def load_data(tuple_name,params) :
         nt = tuple_name
     exts = np.array(np.unique(nt['ext']), dtype = int)
     cov_fit_list = {}
+    if params.subtract_distant_value:
+        print("INFO: subtracting distant covariance offset start, degree", params.min_distance, params.offset_degree)
     for ext in exts :
         print('extension=', ext)
         ntext = nt[nt['ext'] == ext]
         if params.subtract_distant_value :
-            c = ptcfit.cov_fit(ntext,r=None)
-            c.subtract_distant_offset(params.r, params.start, params.offset_degree)
+            c = cov_fit(ntext,r=None)
+            c.subtract_distant_offset(params.max_range_for_ptc_fit,
+                                      params.min_distance, params.offset_degree)
         else :
-            c = ptcfit.cov_fit(ntext, params.r)
-        this_maxmu = params.maxmu            
+            c = cov_fit(ntext, params.r)
+        this_maxmu = params.maxmu_for_ptc_fit
         # tune the maxmu_el cut
         for iter in range(3) : 
             cc = c.copy()
             cc.set_maxmu(this_maxmu)
             cc.init_fit()# allows to get a crude gain.
             gain = cc.get_gain()
-            if (this_maxmu*gain < params.maxmu_el) :
-                this_maxmu = params.maxmu_el/gain
+            if (this_maxmu*gain < params.maxmu_el_for_ptc_fit) :
+                this_maxmu = params.maxmu_el_for_ptc_fit/gain
                 if this_maxmu<0 :
                     print(" the initialization went crazy hope the full fit, gets better")
                     break
                 continue
-            cc.set_maxmu_electrons(params.maxmu_el)
+            cc.set_maxmu_electrons(params.maxmu_el_for_ptc_fit)
             break
         cov_fit_list[ext] = cc
     return cov_fit_list
