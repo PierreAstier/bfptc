@@ -154,9 +154,8 @@ class FileHandler(object) :
 
 class FileHandlerParisBench(FileHandler):
     """ 
-    As its name says. It works to UC-Davis Archon images,
-    and perhaps other LSST sources. If the photodiode extension is not found,
-    the content of EXPTIME is returned
+    As its name says. It also works for UC-Davis (Archon) images,
+    and perhaps other LSST sources. 
     """
     exptime_key_name = "EXPTIME"
     masterbias = None
