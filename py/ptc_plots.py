@@ -1,6 +1,5 @@
 
-from .ptcfit import *
-from .ptc_utils import *
+import numpy as np
 
 #import croaks
 
@@ -884,6 +883,9 @@ def plot_da_dm(fits, fitsnb, maxr=None, figname=None):
     #
     pl.tight_layout()
     if figname is not None: pl.savefig(figname)    
+
+
+from .ptc_utils import mad
 
 # borrowed from Marc Betoule.
 def binplot(x, y, nbins=10, robust=False, data=True,
