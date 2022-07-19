@@ -59,10 +59,17 @@ def chip_to_raft_corner(raft_name, chip_name):
     """
     Rotations are missing !
     """
-    if chip_name == 'SG0' : # slot 10
+    if chip_name == 'SG1' : # slot 10
         dx,dy = +42.5,0
-    elif chip_name == 'SG1' : # slot 10
-        dx,dy = 0, +42.5
+        return AffineTransfo(1.,0,0,1.,dx,dy)
+    elif chip_name == 'SG0' : # slot 01
+        dx,dy = 0, +43
+        shift2=AffineTransfo(1.,0,0,1.,dx,dy)
+        dx_chip = dy_chip = 40.
+        shift1 = AffineTransfo(1.,0,0,1.,-dx_chip/2., -dy_chip/2.)
+        tmp = AffineTransfo.Rot90().compose(shift1)
+        tmp = shift1.inverse_transfo().compose(tmp)
+        return shift2.compose(tmp)
     elif chip_name == 'SW0' :# corresponds to lower half of SR slot 00
         dx,dy = 0, 0
     elif chip_name ==  'SW1' :# corresponds to upper half of SR slot 00
@@ -87,16 +94,22 @@ def amp_to_chip_pix(chip_name, amp_id):
         i = int(amp_id[1])
         j = int(amp_id[0])
     assert((i<8) & (j<2)) 
-    a22_e2v = [-1,1]
-    a11_e2v = [1,-1]
-    a22_itl = [-1,1]
-    dy_itl=[4000,0]
-    dy_e2v=[4004,0]
+    #a22_e2v = [-1,1]
+    #a11_e2v = [1,-1]
+    #a22_itl = [-1,1]
+    #dy_itl=[4000,0]
+    #dy_e2v=[4004,0]
+    a22_e2v = [1,-1]
+    a11_e2v = [-1,1]
+    a22_itl = [1,-1]
+    dy_itl=[0,4000]
+    dy_e2v=[0,4004]
+
     type_of_raft = raft_type(chip_name[:3])
     if type_of_raft == 'CORNER' :
         ccd_name = chip_name[4:]
         if ccd_name == 'SG0' or ccd_name == 'SG1':
-            return AffineTransfo(-1,0,0,a22_itl[j], 512*(i+1), dy_itl[j])
+            return AffineTransfo(-1,0,0,a22_itl[j], 508*(i+1), dy_itl[j])
         if ccd_name == 'SW0' or ccd_name == 'SW1' :
             return AffineTransfo(-1,0,0,1, 508*(i+1), 0)
         raise ValueError(' bad corner raft chip name %s'%ccd_name)
@@ -105,9 +118,9 @@ def amp_to_chip_pix(chip_name, amp_id):
         return AffineTransfo(-1,0,0,a22_itl[j], 508*(i+1), dy_itl[j])
     elif  type_of_raft == 'E2V' :
         if j==0:
-            return AffineTransfo(a11_e2v[j],0,0,a22_e2v[j], 512*i, dy_e2v[j])
-        if j==1 :
             return AffineTransfo(a11_e2v[j],0,0,a22_e2v[j], 512*(i+1), dy_e2v[j])
+        if j==1 :
+            return AffineTransfo(a11_e2v[j],0,0,a22_e2v[j], 512*i, dy_e2v[j])
 
         
 
