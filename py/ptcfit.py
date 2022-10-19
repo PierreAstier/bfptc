@@ -280,7 +280,10 @@ class cov_fit :
         # number of parameters for 'a'
         len_a = self.r*self.r
         # define parameters : c corresponds to a*b in the paper. 
-        self.params=FitParameters([('a', len_a), ('c', len_a), ('noise', len_a), ('gain', 1)])
+        # we aritrarily choose a range for b which is half of the one of a.
+        self.rc = self.r//2 if self.r%2 == 0 else self.r//2+1
+        len_c = self.rc*self.rc
+        self.params=FitParameters([('a', len_a), ('c', len_c), ('noise', len_a), ('gain', 1)])
         self.params['gain'] = 1.
         # obvious : c=0 in a first go.
         self.params['c'].fix(val = 0.)
@@ -331,8 +334,12 @@ class cov_fit :
         This routine implements the model in 1905.08677
         """
         sa = (self.r, self.r)
+        try : # some old files do not have rc
+            sc = (self.rc, self.rc)
+        except :
+            sc = sa
         a = self.params['a'].full.reshape(sa)
-        c = self.params['c'].full.reshape(sa)
+        c = self.params['c'].full.reshape(sc)
         gain = self.params['gain'].full[0]
         noise = self.params['noise'].full.reshape(sa)
         # pad a with zeros and symmetrize
@@ -340,8 +347,8 @@ class cov_fit :
         a_enlarged[0:sa[0], 0:sa[1]] = a
         asym = symmetrize(a_enlarged)
         # pad c with zeros and symmetrize
-        c_enlarged = np.zeros((int(sa[0]*1.5)+1, int(sa[1]*1.5)+1))
-        c_enlarged[0:sa[0], 0:sa[1]] = c
+        c_enlarged = np.zeros_like(a_enlarged)
+        c_enlarged[0:sc[0], 0:sc[1]] = c
         csym = symmetrize(c_enlarged)
         a2 = fftconvolve(asym, asym, mode = 'same')
         a3 = fftconvolve(a2, asym, mode = 'same')
@@ -352,7 +359,9 @@ class cov_fit :
         a2 = a2[np.newaxis, xc:xc+range, yc:yc+range]
         a3 = a3[np.newaxis, xc:xc+range, yc:yc+range]
         ac = ac[np.newaxis, xc:xc+range, yc:yc+range]
-        c1 = c[np.newaxis, : : ]
+        # pad c with zeros up to the size of a
+        c1 = np.zeros_like(a1)
+        c1[:,:sc[0], :sc[1] ] = c[np.newaxis,:,:]
         if mu is None : mu = self.mu
         # assumes that mu is 1d
         bigmu = mu[:, np.newaxis, np.newaxis]*gain
@@ -365,11 +374,15 @@ class cov_fit :
     def get_a(self) :
         return self.params['a'].full.reshape(self.r, self.r)
 
+    def release_b(self) : 
+        self.params['c'].release()
+
     def get_b(self) :
-        return self.params['c'].full.reshape(self.r, self.r)/self.get_a()
+        rc = self.rc
+        return self.params['c'].full.reshape(rc, rc)/self.get_a()[:rc,:rc]
 
     def get_c(self) :
-        return self.params['c'].full.reshape(self.r, self.r)
+        return self.params['c'].full.reshape(self.rc, self.rc)
     
     def _get_cov_params(self,what):
         indices = self.params[what].indexof()
@@ -414,6 +427,22 @@ class cov_fit :
     
     def chi2(self) :
         return (self.weighted_res()**2).sum()
+
+    def fit_chi2_ndof(self):
+        """
+        returns the array of chi2/ndof contributions indexed by i and j 
+        """
+        model = self.eval_cov_model() # indices are [pair, i, j]
+        data = self.cov # same 
+        w = self.sqrt_w**2
+        mask = w != 0
+        ndof = mask.sum(axis=0)-2
+        # for 0,0, count-3 is more accurate:
+        ndof[0,0] -= 1
+        chi2_ndof = ((model-data)**2*w).sum(axis=0)/ndof
+        # handle potentially pathological cases
+        chi2_ndof[np.isnan(chi2_ndof)] = -0.1
+        return chi2_ndof
 
     def wres(self, params = None) :
         if params is not None:
