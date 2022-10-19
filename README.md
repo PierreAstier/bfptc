@@ -23,3 +23,8 @@ routines:
 - py/pol2d.py :
 - py/ptc_plots.py : routines used to generate the plots in the above paper.
 
+The code now contains the material to carry out electrostatic fits
+to the data extracted from PTCs. The outcome of teh electrostatic
+fit is what you need to correct science image from the BF effect.
+elec/integ_et.py : evaluates the needed integrals of the electric field.
+elec fit_cov.py : driver to perform the least squares fit and output the results. 
