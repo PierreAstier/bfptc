@@ -3,7 +3,7 @@ import os
 import glob
 #from lib import __version__
 
-setup(name='croaks',
+setup(name='bfptc',
       version='0.2',
       description='Tools to analyze CCD flats in order to assemble photon transfer and covariance curves',
       author='P. Astier',
