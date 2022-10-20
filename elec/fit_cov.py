@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from integ_et import *
+from bfptc.integ_et import CcdGeom
 import astropy.io.fits  as pf
 
 from bfptc.fitparameters import FitParameters
